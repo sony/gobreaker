@@ -1,0 +1,8 @@
+language: go
+go:
+  - 1.4
+  - tip
+sudo: false
+script:
+  - go test -v .
+  - cd example && go build -o http_breaker && ./http_breaker
