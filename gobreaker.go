@@ -162,13 +162,13 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequst(generation, fmt.Errorf("panic in request"))
+			cb.afterRequest(generation, fmt.Errorf("panic in request"))
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequst(generation, err)
+	cb.afterRequest(generation, err)
 	return result, err
 }
 
@@ -189,7 +189,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequst(before uint64, err error) {
+func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
