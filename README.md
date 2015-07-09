@@ -4,7 +4,7 @@ gobreaker
 [![GoDoc](https://godoc.org/github.com/sony/gobreaker?status.png)](http://godoc.org/github.com/sony/gobreaker)
 [![Build Status](https://travis-ci.org/sony/gobreaker.svg?branch=master)](https://travis-ci.org/sony/gobreaker)
 
-gobreaker implements the [Circuit Breaker pattern](https://msdn.microsoft.com/en-us/library/dn589784.aspx) in Go.
+[gobreaker][repo-url] implements the [Circuit Breaker pattern](https://msdn.microsoft.com/en-us/library/dn589784.aspx) in Go.
 
 Installation
 ------------
@@ -16,14 +16,14 @@ go get github.com/sony/gobreaker
 Usage
 -----
 
-The struct CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
-The function NewCircuitBreaker creates a new CircuitBreaker.
+The struct `CircuitBreaker` is a state machine to prevent sending requests that are likely to fail.
+The function `NewCircuitBreaker` creates a new `CircuitBreaker`.
 
 ```go
 func NewCircuitBreaker(st Settings) *CircuitBreaker
 ```
 
-You can configure CircuitBreaker by the struct Settings:
+You can configure `CircuitBreaker` by the struct `Settings`:
 
 ```go
 type Settings struct {
@@ -36,28 +36,28 @@ type Settings struct {
 }
 ```
 
-- Name is the name of the CircuitBreaker.
+- `Name` is the name of the `CircuitBreaker`.
 
-- MaxRequests is the maximum number of requests allowed to pass through
-  when the CircuitBreaker is half-open.
-  If MaxRequests is 0, the CircuitBreaker allows only 1 request.
+- `MaxRequests` is the maximum number of requests allowed to pass through
+  when the `CircuitBreaker` is half-open.
+  If `MaxRequests` is 0, `CircuitBreaker` allows only 1 request.
 
-- Interval is the cyclic period of the closed state
-  for the CircuitBreaker to clear the internal Counts, described later in this section.
-  If Interval is 0, the CircuitBreaker doesn't clear the internal Counts during the closed state.
+- `Interval` is the cyclic period of the closed state
+  for `CircuitBreaker` to clear the internal `Counts`, described later in this section.
+  If `Interval` is 0, `CircuitBreaker` doesn't clear the internal `Counts` during the closed state.
 
-- Timeout is the period of the open state,
-  after which the state of the CircuitBreaker becomes half-open.
-  If Timeout is 0, the timeout value of the CircuitBreaker is set to 60 seconds.
+- `Timeout` is the period of the open state,
+  after which the state of `CircuitBreaker` becomes half-open.
+  If `Timeout` is 0, the timeout value of `CircuitBreaker` is set to 60 seconds.
 
-- ReadyToTrip is called with a copy of Counts whenever a request fails in the closed state.
-  If ReadyToTrip returns true, the CircuitBreaker will be placed into the open state.
-  If ReadyToTrip is nil, default ReadyToTrip is used.
-  Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
+- `ReadyToTrip` is called with a copy of `Counts` whenever a request fails in the closed state.
+  If `ReadyToTrip` returns true, `CircuitBreaker` will be placed into the open state.
+  If `ReadyToTrip` is `nil`, default `ReadyToTrip` is used.
+  Default `ReadyToTrip` returns true when the number of consecutive failures is more than 5.
 
-- OnStateChange is called whenever the state of the CircuitBreaker changes.
+- `OnStateChange` is called whenever the state of `CircuitBreaker` changes.
 
-The struct Counts holds the numbers of requests and their successes/failures:
+The struct `Counts` holds the numbers of requests and their successes/failures:
 
 ```go
 type Counts struct {
@@ -69,20 +69,20 @@ type Counts struct {
 }
 ```
 
-CircuitBreaker clears the internal Counts either
+`CircuitBreaker` clears the internal `Counts` either
 on the change of the state or at the closed-state intervals.
-Counts ignores the results of the requests sent before clearing.
+`Counts` ignores the results of the requests sent before clearing.
 
-CircuitBreaker can wrap any function to send a request:
+`CircuitBreaker` can wrap any function to send a request:
 
 ```go
 func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error)
 ```
 
-The method Execute runs the given request if the CircuitBreaker accepts it.
-Execute returns an error instantly if the CircuitBreaker rejects the request.
-Otherwise, Execute returns the result of the request.
-If a panic occurs in the request, the CircuitBreaker handles it as an error
+The method `Execute` runs the given request if `CircuitBreaker` accepts it.
+`Execute` returns an error instantly if `CircuitBreaker` rejects the request.
+Otherwise, `Execute` returns the result of the request.
+If a panic occurs in the request, `CircuitBreaker` handles it as an error
 and causes the same panic again.
 
 Example
@@ -122,3 +122,6 @@ License
 The MIT License (MIT)
 
 See [LICENSE](https://github.com/sony/gobreaker/blob/master/LICENSE) for details.
+
+
+[repo-url]: https://github.com/sony/gobreaker
