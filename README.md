@@ -3,6 +3,7 @@ gobreaker
 
 [![GoDoc](https://godoc.org/github.com/sony/gobreaker?status.png)](http://godoc.org/github.com/sony/gobreaker)
 [![Build Status](https://travis-ci.org/sony/gobreaker.svg?branch=master)](https://travis-ci.org/sony/gobreaker)
+[![Coverage Status](https://coveralls.io/repos/sony/gobreaker/badge.svg?branch=master&service=github)](https://coveralls.io/github/sony/gobreaker?branch=master)
 
 [gobreaker][repo-url] implements the [Circuit Breaker pattern](https://msdn.microsoft.com/en-us/library/dn589784.aspx) in Go.
 
