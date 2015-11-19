@@ -61,6 +61,11 @@ func TestStateConstants(t *testing.T) {
 	assert.Equal(t, State(0), StateClosed)
 	assert.Equal(t, State(1), StateHalfOpen)
 	assert.Equal(t, State(2), StateOpen)
+
+	assert.Equal(t, StateClosed.String(), "closed")
+	assert.Equal(t, StateHalfOpen.String(), "half-open")
+	assert.Equal(t, StateOpen.String(), "open")
+	assert.Equal(t, State(100).String(), "unknown state: 100")
 }
 
 func TestNewCircuitBreaker(t *testing.T) {
