@@ -13,10 +13,24 @@ type State int
 
 // These constants are states of CircuitBreaker.
 const (
-	StateClosed   State = iota
-	StateHalfOpen State = iota
-	StateOpen     State = iota
+	StateClosed State = iota
+	StateHalfOpen
+	StateOpen
 )
+
+// String implements stringer interface.
+func (s State) String() string {
+	switch s {
+	case StateClosed:
+		return "closed"
+	case StateHalfOpen:
+		return "half-open"
+	case StateOpen:
+		return "open"
+	default:
+		return fmt.Sprintf("unknown state: %d", s)
+	}
+}
 
 // Counts holds the numbers of requests and their successes/failures.
 // CircuitBreaker clears the internal Counts either
