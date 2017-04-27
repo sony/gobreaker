@@ -167,6 +167,9 @@ func (cb *CircuitBreaker) State() State {
 // Otherwise, Execute returns the result of the request.
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
+//
+// If the request can not be expressed as a single function you can use Allow
+// in combination with Success or Fail.
 func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error) {
 	generation, err := cb.beforeRequest()
 	if err != nil {
@@ -176,14 +179,37 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, fmt.Errorf("panic in request"))
+			cb.afterRequest(generation, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, err)
+	cb.afterRequest(generation, err == nil)
 	return result, err
+}
+
+// Allow registers a new request with the CircuitBreaker.
+// Allow returns the current generation. If the Circuit Breaker doesn't allow
+// requests it returns an error.
+//
+// Use Success or Fail with the returned generation to register the outcome of the request.
+//
+// If the request can be expressed as a single function it is recommended to use Execute.
+func (cb *CircuitBreaker) Allow() (uint64, error) {
+	return cb.beforeRequest()
+}
+
+// Success registers a successful outcome for the generation returned by the call to Allow,
+// prior to executing the request.
+func (cb *CircuitBreaker) Success(generation uint64) {
+	cb.afterRequest(generation, true)
+}
+
+// Fail registers a failed outcome for the generation returned by the call to Allow,
+// prior to executing the request.
+func (cb *CircuitBreaker) Fail(generation uint64) {
+	cb.afterRequest(generation, false)
 }
 
 func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
@@ -203,7 +229,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
+func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
@@ -213,7 +239,7 @@ func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
 		return
 	}
 
-	if err == nil {
+	if success {
 		cb.onSuccess(state, now)
 	} else {
 		cb.onFailure(state, now)
