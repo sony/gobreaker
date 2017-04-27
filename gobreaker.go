@@ -176,14 +176,26 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, fmt.Errorf("panic in request"))
+			cb.afterRequest(generation, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, err)
+	cb.afterRequest(generation, err == nil)
 	return result, err
+}
+
+func (cb *CircuitBreaker) Allow() (uint64, error) {
+	return cb.beforeRequest()
+}
+
+func (cb *CircuitBreaker) Success(generation uint64) {
+	cb.afterRequest(generation, true)
+}
+
+func (cb *CircuitBreaker) Fail(generation uint64) {
+	cb.afterRequest(generation, false)
 }
 
 func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
@@ -203,7 +215,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
+func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
@@ -213,7 +225,7 @@ func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
 		return
 	}
 
-	if err == nil {
+	if success {
 		cb.onSuccess(state, now)
 	} else {
 		cb.onFailure(state, now)
