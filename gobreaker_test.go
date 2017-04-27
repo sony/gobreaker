@@ -76,32 +76,7 @@ func causePanic(cb *CircuitBreaker) error {
 	return err
 }
 
-func init() {
-	defaultCB = NewCircuitBreaker(Settings{})
-}
-
-func TestStateConstants(t *testing.T) {
-	assert.Equal(t, State(0), StateClosed)
-	assert.Equal(t, State(1), StateHalfOpen)
-	assert.Equal(t, State(2), StateOpen)
-
-	assert.Equal(t, StateClosed.String(), "closed")
-	assert.Equal(t, StateHalfOpen.String(), "half-open")
-	assert.Equal(t, StateOpen.String(), "open")
-	assert.Equal(t, State(100).String(), "unknown state: 100")
-}
-
-func TestNewCircuitBreaker(t *testing.T) {
-	assert.Equal(t, "", defaultCB.name)
-	assert.Equal(t, uint32(1), defaultCB.maxRequests)
-	assert.Equal(t, time.Duration(0), defaultCB.interval)
-	assert.Equal(t, time.Duration(60)*time.Second, defaultCB.timeout)
-	assert.NotNil(t, defaultCB.readyToTrip)
-	assert.Nil(t, defaultCB.onStateChange)
-	assert.Equal(t, StateClosed, defaultCB.state)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
-	assert.True(t, defaultCB.expiry.IsZero())
-
+func newCustom() *CircuitBreaker {
 	var customSt Settings
 	customSt.Name = "cb"
 	customSt.MaxRequests = 3
@@ -118,7 +93,39 @@ func TestNewCircuitBreaker(t *testing.T) {
 	customSt.OnStateChange = func(name string, from State, to State) {
 		stateChange = StateChange{name, from, to}
 	}
-	customCB = NewCircuitBreaker(customSt)
+
+	return NewCircuitBreaker(customSt)
+}
+
+func init() {
+	defaultCB = NewCircuitBreaker(Settings{})
+	customCB = newCustom()
+}
+
+func TestStateConstants(t *testing.T) {
+	assert.Equal(t, State(0), StateClosed)
+	assert.Equal(t, State(1), StateHalfOpen)
+	assert.Equal(t, State(2), StateOpen)
+
+	assert.Equal(t, StateClosed.String(), "closed")
+	assert.Equal(t, StateHalfOpen.String(), "half-open")
+	assert.Equal(t, StateOpen.String(), "open")
+	assert.Equal(t, State(100).String(), "unknown state: 100")
+}
+
+func TestNewCircuitBreaker(t *testing.T) {
+	defaultCB := NewCircuitBreaker(Settings{})
+	assert.Equal(t, "", defaultCB.name)
+	assert.Equal(t, uint32(1), defaultCB.maxRequests)
+	assert.Equal(t, time.Duration(0), defaultCB.interval)
+	assert.Equal(t, time.Duration(60)*time.Second, defaultCB.timeout)
+	assert.NotNil(t, defaultCB.readyToTrip)
+	assert.Nil(t, defaultCB.onStateChange)
+	assert.Equal(t, StateClosed, defaultCB.state)
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
+	assert.True(t, defaultCB.expiry.IsZero())
+
+	customCB := newCustom()
 	assert.Equal(t, "cb", customCB.name)
 	assert.Equal(t, uint32(3), customCB.maxRequests)
 	assert.Equal(t, time.Duration(30)*time.Second, customCB.interval)
