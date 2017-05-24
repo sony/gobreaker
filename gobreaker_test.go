@@ -44,12 +44,12 @@ func succeedLater(cb *CircuitBreaker, delay time.Duration) <-chan error {
 }
 
 func succeed2Step(cb *CircuitBreaker) error {
-	g, err := cb.Allow()
+	done, err := cb.Allow()
 	if err != nil {
 		return err
 	}
 
-	cb.Success(g)
+	done(true)
 	return nil
 }
 
@@ -63,12 +63,12 @@ func fail(cb *CircuitBreaker) error {
 }
 
 func fail2Step(cb *CircuitBreaker) {
-	g, err := cb.Allow()
+	done, err := cb.Allow()
 	if err != nil {
 		return
 	}
 
-	cb.Fail(g)
+	done(false)
 }
 
 func causePanic(cb *CircuitBreaker) error {
@@ -243,6 +243,7 @@ func TestMultiStepBreaker(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		fail2Step(defaultCB)
 	}
+
 	assert.Equal(t, StateClosed, defaultCB.State())
 	assert.Equal(t, Counts{5, 0, 5, 0, 5}, defaultCB.counts)
 
