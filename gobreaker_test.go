@@ -43,7 +43,7 @@ func succeedLater(cb *CircuitBreaker, delay time.Duration) <-chan error {
 	return ch
 }
 
-func succeed2Step(cb *CircuitBreaker) error {
+func succeed2Step(cb *TwoStepCircuitBreaker) error {
 	done, err := cb.Allow()
 	if err != nil {
 		return err
@@ -62,7 +62,7 @@ func fail(cb *CircuitBreaker) error {
 	return err
 }
 
-func fail2Step(cb *CircuitBreaker) {
+func fail2Step(cb *TwoStepCircuitBreaker) {
 	done, err := cb.Allow()
 	if err != nil {
 		return
@@ -240,31 +240,32 @@ func TestCustomCircuitBreaker(t *testing.T) {
 }
 
 func TestMultiStepBreaker(t *testing.T) {
+	cb := &TwoStepCircuitBreaker{cb: defaultCB}
 	for i := 0; i < 5; i++ {
-		fail2Step(defaultCB)
+		fail2Step(cb)
 	}
 
 	assert.Equal(t, StateClosed, defaultCB.State())
 	assert.Equal(t, Counts{5, 0, 5, 0, 5}, defaultCB.counts)
 
-	assert.Nil(t, succeed2Step(defaultCB))
+	assert.Nil(t, succeed2Step(cb))
 	assert.Equal(t, StateClosed, defaultCB.State())
 	assert.Equal(t, Counts{6, 1, 5, 1, 0}, defaultCB.counts)
 
-	fail2Step(defaultCB)
+	fail2Step(cb)
 	assert.Equal(t, StateClosed, defaultCB.State())
 	assert.Equal(t, Counts{7, 1, 6, 0, 1}, defaultCB.counts)
 
 	// StateClosed to StateOpen
 	for i := 0; i < 5; i++ {
-		fail2Step(defaultCB) // 6 consecutive failures
+		fail2Step(cb) // 6 consecutive failures
 	}
 	assert.Equal(t, StateOpen, defaultCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
 	assert.False(t, defaultCB.expiry.IsZero())
 
-	assert.Error(t, succeed2Step(defaultCB))
-	fail2Step(defaultCB)
+	assert.Error(t, succeed2Step(cb))
+	fail2Step(cb)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
 
 	pseudoSleep(defaultCB, time.Duration(59)*time.Second)
@@ -276,7 +277,7 @@ func TestMultiStepBreaker(t *testing.T) {
 	assert.True(t, defaultCB.expiry.IsZero())
 
 	// StateHalfOpen to StateOpen
-	fail2Step(defaultCB)
+	fail2Step(cb)
 	assert.Equal(t, StateOpen, defaultCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
 	assert.False(t, defaultCB.expiry.IsZero())
@@ -287,7 +288,7 @@ func TestMultiStepBreaker(t *testing.T) {
 	assert.True(t, defaultCB.expiry.IsZero())
 
 	// StateHalfOpen to StateClosed
-	assert.Nil(t, succeed2Step(defaultCB))
+	assert.Nil(t, succeed2Step(cb))
 	assert.Equal(t, StateClosed, defaultCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
 	assert.True(t, defaultCB.expiry.IsZero())

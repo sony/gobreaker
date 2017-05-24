@@ -115,6 +115,12 @@ type CircuitBreaker struct {
 	expiry     time.Time
 }
 
+// TwoStepCircuitBreaker is like CircuitBreaker but it allows to check the breaker state
+// for requests and to commit their outcome in two separate steps.
+type TwoStepCircuitBreaker struct {
+	cb *CircuitBreaker
+}
+
 // NewCircuitBreaker returns a new CircuitBreaker configured with the given Settings.
 func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	cb := new(CircuitBreaker)
@@ -144,6 +150,13 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	cb.toNewGeneration(time.Now())
 
 	return cb
+}
+
+// NewTwoStep returns a new TwoStepCircuitBreaker configured with the given Settings.
+func NewTwoStep(st Settings) *TwoStepCircuitBreaker {
+	return &TwoStepCircuitBreaker{
+		cb: NewCircuitBreaker(st),
+	}
 }
 
 const defaultTimeout = time.Duration(60) * time.Second
@@ -191,16 +204,14 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 // Allow returns a callback that should be used to register the success or failure of the
 // request in a separate step. If the Circuit Breaker doesn't allow requests it returns an
 // error.
-//
-// If the request can be expressed as a single function it is recommended to use Execute.
-func (cb *CircuitBreaker) Allow() (done func(success bool), err error) {
-	generation, err := cb.beforeRequest()
+func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
+	generation, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
 	return func(success bool) {
-		cb.afterRequest(generation, success)
+		tscb.cb.afterRequest(generation, success)
 	}, nil
 }
 
