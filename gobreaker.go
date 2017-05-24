@@ -115,8 +115,9 @@ type CircuitBreaker struct {
 	expiry     time.Time
 }
 
-// TwoStepCircuitBreaker is like CircuitBreaker but it allows to check the breaker state
-// for requests and to commit their outcome in two separate steps.
+// TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
+// with the breaker functionality, it only checks whether a request can proceed and
+// expects the caller to report the outcome in a separate step using a callback.
 type TwoStepCircuitBreaker struct {
 	cb *CircuitBreaker
 }
@@ -199,11 +200,9 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	return result, err
 }
 
-// Allow registers a new request with the CircuitBreaker.
-//
-// Allow returns a callback that should be used to register the success or failure of the
-// request in a separate step. If the Circuit Breaker doesn't allow requests it returns an
-// error.
+// Allow checks if a new request can proceed. It returns a callback that should be used to
+// register the success or failure in a separate step. If the Circuit Breaker doesn't allow
+// requests it returns an error.
 func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
 	generation, err := tscb.cb.beforeRequest()
 	if err != nil {
