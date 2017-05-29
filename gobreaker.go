@@ -153,8 +153,8 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	return cb
 }
 
-// NewTwoStep returns a new TwoStepCircuitBreaker configured with the given Settings.
-func NewTwoStep(st Settings) *TwoStepCircuitBreaker {
+// NewTwoStepCircuitBreaker returns a new TwoStepCircuitBreaker configured with the given Settings.
+func NewTwoStepCircuitBreaker(st Settings) *TwoStepCircuitBreaker {
 	return &TwoStepCircuitBreaker{
 		cb: NewCircuitBreaker(st),
 	}
@@ -212,6 +212,11 @@ func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) 
 	return func(success bool) {
 		tscb.cb.afterRequest(generation, success)
 	}, nil
+}
+
+// State returns the current state of the TwoStepCircuitBreaker.
+func (tscb *TwoStepCircuitBreaker) State() State {
+	return tscb.cb.State()
 }
 
 func (cb *CircuitBreaker) beforeRequest() (uint64, error) {

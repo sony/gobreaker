@@ -62,13 +62,14 @@ func fail(cb *CircuitBreaker) error {
 	return err
 }
 
-func fail2Step(cb *TwoStepCircuitBreaker) {
+func fail2Step(cb *TwoStepCircuitBreaker) error {
 	done, err := cb.Allow()
 	if err != nil {
-		return
+		return err
 	}
 
 	done(false)
+	return nil
 }
 
 func causePanic(cb *CircuitBreaker) error {
@@ -239,59 +240,59 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"cb", StateHalfOpen, StateClosed}, stateChange)
 }
 
-func TestMultiStepBreaker(t *testing.T) {
-	cb := &TwoStepCircuitBreaker{cb: defaultCB}
+func TestTwoStepCircuitBreaker(t *testing.T) {
+	tscb := NewTwoStepCircuitBreaker(Settings{})
 	for i := 0; i < 5; i++ {
-		fail2Step(cb)
+		assert.Nil(t, fail2Step(tscb))
 	}
 
-	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{5, 0, 5, 0, 5}, defaultCB.counts)
+	assert.Equal(t, StateClosed, tscb.State())
+	assert.Equal(t, Counts{5, 0, 5, 0, 5}, tscb.cb.counts)
 
-	assert.Nil(t, succeed2Step(cb))
-	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{6, 1, 5, 1, 0}, defaultCB.counts)
+	assert.Nil(t, succeed2Step(tscb))
+	assert.Equal(t, StateClosed, tscb.State())
+	assert.Equal(t, Counts{6, 1, 5, 1, 0}, tscb.cb.counts)
 
-	fail2Step(cb)
-	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{7, 1, 6, 0, 1}, defaultCB.counts)
+	assert.Nil(t, fail2Step(tscb))
+	assert.Equal(t, StateClosed, tscb.State())
+	assert.Equal(t, Counts{7, 1, 6, 0, 1}, tscb.cb.counts)
 
 	// StateClosed to StateOpen
 	for i := 0; i < 5; i++ {
-		fail2Step(cb) // 6 consecutive failures
+		assert.Nil(t, fail2Step(tscb)) // 6 consecutive failures
 	}
-	assert.Equal(t, StateOpen, defaultCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
-	assert.False(t, defaultCB.expiry.IsZero())
+	assert.Equal(t, StateOpen, tscb.State())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts)
+	assert.False(t, tscb.cb.expiry.IsZero())
 
-	assert.Error(t, succeed2Step(cb))
-	fail2Step(cb)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
+	assert.Error(t, succeed2Step(tscb))
+	assert.Error(t, fail2Step(tscb))
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts)
 
-	pseudoSleep(defaultCB, time.Duration(59)*time.Second)
-	assert.Equal(t, StateOpen, defaultCB.State())
+	pseudoSleep(tscb.cb, time.Duration(59)*time.Second)
+	assert.Equal(t, StateOpen, tscb.State())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(defaultCB, time.Duration(1)*time.Second) // over Timeout
-	assert.Equal(t, StateHalfOpen, defaultCB.State())
-	assert.True(t, defaultCB.expiry.IsZero())
+	pseudoSleep(tscb.cb, time.Duration(1)*time.Second) // over Timeout
+	assert.Equal(t, StateHalfOpen, tscb.State())
+	assert.True(t, tscb.cb.expiry.IsZero())
 
 	// StateHalfOpen to StateOpen
-	fail2Step(cb)
-	assert.Equal(t, StateOpen, defaultCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
-	assert.False(t, defaultCB.expiry.IsZero())
+	assert.Nil(t, fail2Step(tscb))
+	assert.Equal(t, StateOpen, tscb.State())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts)
+	assert.False(t, tscb.cb.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(defaultCB, time.Duration(60)*time.Second)
-	assert.Equal(t, StateHalfOpen, defaultCB.State())
-	assert.True(t, defaultCB.expiry.IsZero())
+	pseudoSleep(tscb.cb, time.Duration(60)*time.Second)
+	assert.Equal(t, StateHalfOpen, tscb.State())
+	assert.True(t, tscb.cb.expiry.IsZero())
 
 	// StateHalfOpen to StateClosed
-	assert.Nil(t, succeed2Step(cb))
-	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
-	assert.True(t, defaultCB.expiry.IsZero())
+	assert.Nil(t, succeed2Step(tscb))
+	assert.Equal(t, StateClosed, tscb.State())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts)
+	assert.True(t, tscb.cb.expiry.IsZero())
 }
 
 func TestPanicInRequest(t *testing.T) {
