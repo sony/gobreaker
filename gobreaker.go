@@ -115,6 +115,13 @@ type CircuitBreaker struct {
 	expiry     time.Time
 }
 
+// TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
+// with the breaker functionality, it only checks whether a request can proceed and
+// expects the caller to report the outcome in a separate step using a callback.
+type TwoStepCircuitBreaker struct {
+	cb *CircuitBreaker
+}
+
 // NewCircuitBreaker returns a new CircuitBreaker configured with the given Settings.
 func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	cb := new(CircuitBreaker)
@@ -144,6 +151,13 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	cb.toNewGeneration(time.Now())
 
 	return cb
+}
+
+// NewTwoStepCircuitBreaker returns a new TwoStepCircuitBreaker configured with the given Settings.
+func NewTwoStepCircuitBreaker(st Settings) *TwoStepCircuitBreaker {
+	return &TwoStepCircuitBreaker{
+		cb: NewCircuitBreaker(st),
+	}
 }
 
 const defaultTimeout = time.Duration(60) * time.Second
@@ -176,14 +190,33 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, fmt.Errorf("panic in request"))
+			cb.afterRequest(generation, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, err)
+	cb.afterRequest(generation, err == nil)
 	return result, err
+}
+
+// Allow checks if a new request can proceed. It returns a callback that should be used to
+// register the success or failure in a separate step. If the Circuit Breaker doesn't allow
+// requests it returns an error.
+func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
+	generation, err := tscb.cb.beforeRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	return func(success bool) {
+		tscb.cb.afterRequest(generation, success)
+	}, nil
+}
+
+// State returns the current state of the TwoStepCircuitBreaker.
+func (tscb *TwoStepCircuitBreaker) State() State {
+	return tscb.cb.State()
 }
 
 func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
@@ -203,7 +236,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
+func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
@@ -213,7 +246,7 @@ func (cb *CircuitBreaker) afterRequest(before uint64, err error) {
 		return
 	}
 
-	if err == nil {
+	if success {
 		cb.onSuccess(state, now)
 	} else {
 		cb.onFailure(state, now)
