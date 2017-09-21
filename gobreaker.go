@@ -3,6 +3,7 @@
 package gobreaker
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -17,6 +18,27 @@ const (
 	StateHalfOpen
 	StateOpen
 )
+
+// ErrTooManyRequest is returned when the CB state is half open and the requests count is over the cb maxRequests
+var ErrTooManyRequest = errors.New("too many requests")
+
+// ErrCircuitOpen is returned when the CB state is open
+type ErrCircuitOpen struct {
+	name string
+	msg  string
+}
+
+// Name returns the name of the circuit breaker that threw the error
+func (e ErrCircuitOpen) Name() string {
+	return e.name
+}
+
+func (e ErrCircuitOpen) Error() string {
+	if e.name == "" {
+		return "circuit breaker is open"
+	}
+	return "circuit breaker '" + e.name + "' is open"
+}
 
 // String implements stringer interface.
 func (s State) String() string {
@@ -229,7 +251,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	if state == StateOpen {
 		return generation, cb.errorStateOpen()
 	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, fmt.Errorf("too many requests")
+		return generation, ErrTooManyRequest
 	}
 
 	cb.counts.onRequest()
@@ -326,9 +348,8 @@ func (cb *CircuitBreaker) toNewGeneration(now time.Time) {
 }
 
 func (cb *CircuitBreaker) errorStateOpen() error {
-	if cb.name == "" {
-		return fmt.Errorf("circuit breaker is open")
+	return ErrCircuitOpen{
+		name: cb.name,
+		msg:  "circuit breaker is open",
 	}
-
-	return fmt.Errorf("circuit breaker '%s' is open", cb.name)
 }
