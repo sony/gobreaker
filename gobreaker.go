@@ -19,8 +19,8 @@ const (
 	StateOpen
 )
 
-// ErrTooManyRequest is returned when the CB state is half open and the requests count is over the cb maxRequests
-var ErrTooManyRequest = errors.New("too many requests")
+// ErrTooManyRequests is returned when the CB state is half open and the requests count is over the cb maxRequests
+var ErrTooManyRequests = errors.New("too many requests")
 
 // ErrCircuitOpen is returned when the CB state is open
 type ErrCircuitOpen struct {
@@ -251,7 +251,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	if state == StateOpen {
 		return generation, cb.errorStateOpen()
 	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, ErrTooManyRequest
+		return generation, ErrTooManyRequests
 	}
 
 	cb.counts.onRequest()

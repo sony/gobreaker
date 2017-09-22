@@ -348,3 +348,11 @@ func TestErrorStateOpen(t *testing.T) {
 	err = customCB.errorStateOpen()
 	assert.Equal(t, "circuit breaker 'cb' is open", err.Error())
 }
+
+func TestErrCircuitOpen(t *testing.T) {
+	err := ErrCircuitOpen{}
+	assert.Equal(t, "", err.Name())
+
+	err = ErrCircuitOpen{name: "cb_name"}
+	assert.Equal(t, "cb_name", err.Name())
+}
