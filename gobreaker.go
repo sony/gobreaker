@@ -23,21 +23,19 @@ const (
 var ErrTooManyRequests = errors.New("too many requests")
 
 // ErrCircuitOpen is returned when the CB state is open
-type ErrCircuitOpen struct {
-	name string
-	msg  string
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
+// ErrCircuitBreaker is a generic error returned from the CB, wrapping the error and containing the name
+type ErrCircuitBreaker struct {
+	Name string
+	Err  error
 }
 
-// Name returns the name of the circuit breaker that threw the error
-func (e ErrCircuitOpen) Name() string {
-	return e.name
-}
-
-func (e ErrCircuitOpen) Error() string {
-	if e.name == "" {
-		return "circuit breaker is open"
+func (e ErrCircuitBreaker) Error() string {
+	if e.Err == ErrCircuitOpen && e.Name != "" {
+		return "circuit breaker '" + e.Name + "' is open"
 	}
-	return "circuit breaker '" + e.name + "' is open"
+	return e.Err.Error()
 }
 
 // String implements stringer interface.
@@ -251,7 +249,10 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	if state == StateOpen {
 		return generation, cb.errorStateOpen()
 	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, ErrTooManyRequests
+		return generation, ErrCircuitBreaker{
+			Name: cb.name,
+			Err:  ErrTooManyRequests,
+		}
 	}
 
 	cb.counts.onRequest()
@@ -348,8 +349,8 @@ func (cb *CircuitBreaker) toNewGeneration(now time.Time) {
 }
 
 func (cb *CircuitBreaker) errorStateOpen() error {
-	return ErrCircuitOpen{
-		name: cb.name,
-		msg:  "circuit breaker is open",
+	return ErrCircuitBreaker{
+		Name: cb.name,
+		Err:  ErrCircuitOpen,
 	}
 }
