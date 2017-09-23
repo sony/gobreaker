@@ -345,12 +345,12 @@ func TestErrorStateOpen(t *testing.T) {
 	err := defaultCB.errorStateOpen()
 	assert.Equal(t, "circuit breaker is open", err.Error())
 
-	_, ok := err.(ErrCircuitBreaker)
+	_, ok := err.(Error)
 	assert.True(t, ok)
 
 	err = customCB.errorStateOpen()
 	assert.Equal(t, "circuit breaker 'cb' is open", err.Error())
 
-	_, ok = err.(ErrCircuitBreaker)
+	_, ok = err.(Error)
 	assert.True(t, ok)
 }
