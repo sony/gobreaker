@@ -346,17 +346,3 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 	}
 	assert.Equal(t, Counts{total, total, 0, total, 0}, customCB.counts)
 }
-
-func TestErrorStateOpen(t *testing.T) {
-	err := defaultCB.errorStateOpen()
-	assert.Equal(t, "circuit breaker is open", err.Error())
-
-	_, ok := err.(Error)
-	assert.True(t, ok)
-
-	err = customCB.errorStateOpen()
-	assert.Equal(t, "circuit breaker 'cb' is open", err.Error())
-
-	_, ok = err.(Error)
-	assert.True(t, ok)
-}
