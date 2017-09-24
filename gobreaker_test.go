@@ -139,6 +139,8 @@ func TestNewCircuitBreaker(t *testing.T) {
 }
 
 func TestDefaultCircuitBreaker(t *testing.T) {
+	assert.Equal(t, "", defaultCB.Name())
+
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, fail(defaultCB))
 	}
@@ -192,6 +194,8 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 }
 
 func TestCustomCircuitBreaker(t *testing.T) {
+	assert.Equal(t, "cb", customCB.Name())
+
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, succeed(customCB))
 		assert.Nil(t, fail(customCB))
@@ -241,7 +245,9 @@ func TestCustomCircuitBreaker(t *testing.T) {
 }
 
 func TestTwoStepCircuitBreaker(t *testing.T) {
-	tscb := NewTwoStepCircuitBreaker(Settings{})
+	tscb := NewTwoStepCircuitBreaker(Settings{Name: "tscb"})
+	assert.Equal(t, "tscb", tscb.Name())
+
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, fail2Step(tscb))
 	}
