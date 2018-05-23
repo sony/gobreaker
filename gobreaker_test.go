@@ -27,18 +27,16 @@ func pseudoSleep(cb *CircuitBreaker, period time.Duration) {
 }
 
 func succeed(cb *CircuitBreaker) error {
-	_, err := cb.Execute(func() (interface{}, error) { return nil, nil })
-	return err
+	return cb.Execute(func() error { return nil })
 }
 
 func succeedLater(cb *CircuitBreaker, delay time.Duration) <-chan error {
 	ch := make(chan error)
 	go func() {
-		_, err := cb.Execute(func() (interface{}, error) {
+		ch <- cb.Execute(func() error {
 			time.Sleep(delay)
-			return nil, nil
+			return nil
 		})
-		ch <- err
 	}()
 	return ch
 }
@@ -55,7 +53,7 @@ func succeed2Step(cb *TwoStepCircuitBreaker) error {
 
 func fail(cb *CircuitBreaker) error {
 	msg := "fail"
-	_, err := cb.Execute(func() (interface{}, error) { return nil, fmt.Errorf(msg) })
+	err := cb.Execute(func() error { return fmt.Errorf(msg) })
 	if err.Error() == msg {
 		return nil
 	}
@@ -73,8 +71,7 @@ func fail2Step(cb *TwoStepCircuitBreaker) error {
 }
 
 func causePanic(cb *CircuitBreaker) error {
-	_, err := cb.Execute(func() (interface{}, error) { panic("oops"); return nil, nil })
-	return err
+	return cb.Execute(func() error { panic("oops") })
 }
 
 func newCustom() *CircuitBreaker {
