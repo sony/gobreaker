@@ -191,13 +191,13 @@ func (cb *CircuitBreaker) State() State {
 
 // Execute runs the given request if the CircuitBreaker accepts it.
 // Execute returns an error instantly if the CircuitBreaker rejects the request.
-// Otherwise, Execute returns the result of the request.
+// Otherwise, Execute returns nil.
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
-func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error) {
+func (cb *CircuitBreaker) Execute(req func() error) error {
 	generation, err := cb.beforeRequest()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	defer func() {
@@ -208,9 +208,9 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 		}
 	}()
 
-	result, err := req()
+	err = req()
 	cb.afterRequest(generation, err == nil)
-	return result, err
+	return err
 }
 
 // Name returns the name of the TwoStepCircuitBreaker.

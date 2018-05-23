@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/sony/gobreaker"
+	"github.com/influxdata/gobreaker"
 )
 
 var cb *gobreaker.CircuitBreaker
@@ -23,26 +23,22 @@ func init() {
 }
 
 // Get wraps http.Get in CircuitBreaker.
-func Get(url string) ([]byte, error) {
-	body, err := cb.Execute(func() (interface{}, error) {
+func Get(url string) (b []byte, err error) {
+	err = cb.Execute(func() error {
 		resp, err := http.Get(url)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-
-		return body, nil
+		b, err = ioutil.ReadAll(resp.Body)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return body.([]byte), nil
+	return b, nil
 }
 
 func main() {
@@ -51,5 +47,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("%s", string(body))
+	fmt.Println(string(body))
 }
