@@ -86,11 +86,11 @@ func (c *Counts) clear() {
 //
 // Interval is the cyclic period of the closed state
 // for the CircuitBreaker to clear the internal Counts.
-// If Interval is 0, the CircuitBreaker doesn't clear internal Counts during the closed state.
+// If Interval is less than or equal to 0, the CircuitBreaker doesn't clear internal Counts during the closed state.
 //
 // Timeout is the period of the open state,
 // after which the state of the CircuitBreaker becomes half-open.
-// If Timeout is 0, the timeout value of the CircuitBreaker is set to 60 seconds.
+// If Timeout is less than or equal to 0, the timeout value of the CircuitBreaker is set to 60 seconds.
 //
 // ReadyToTrip is called with a copy of Counts whenever a request fails in the closed state.
 // If ReadyToTrip returns true, the CircuitBreaker will be placed into the open state.
@@ -135,7 +135,6 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	cb := new(CircuitBreaker)
 
 	cb.name = st.Name
-	cb.interval = st.Interval
 	cb.onStateChange = st.OnStateChange
 
 	if st.MaxRequests == 0 {
@@ -144,7 +143,13 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 		cb.maxRequests = st.MaxRequests
 	}
 
-	if st.Timeout == 0 {
+	if st.Interval <= 0 {
+		cb.interval = defaultInterval
+	} else {
+		cb.interval = st.Interval
+	}
+
+	if st.Timeout <= 0 {
 		cb.timeout = defaultTimeout
 	} else {
 		cb.timeout = st.Timeout
@@ -168,6 +173,7 @@ func NewTwoStepCircuitBreaker(st Settings) *TwoStepCircuitBreaker {
 	}
 }
 
+const defaultInterval = time.Duration(0) * time.Second
 const defaultTimeout = time.Duration(60) * time.Second
 
 func defaultReadyToTrip(counts Counts) bool {
