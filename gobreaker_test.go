@@ -11,6 +11,7 @@ import (
 
 var defaultCB *CircuitBreaker
 var customCB *CircuitBreaker
+var negativeDurationCB *CircuitBreaker
 
 type StateChange struct {
 	name string
@@ -98,9 +99,19 @@ func newCustom() *CircuitBreaker {
 	return NewCircuitBreaker(customSt)
 }
 
+func newNegativeDurationCB() *CircuitBreaker {
+	var negativeSt Settings
+	negativeSt.Name = "ncb"
+	negativeSt.Interval = time.Duration(-30) * time.Second
+	negativeSt.Timeout = time.Duration(-90) * time.Second
+
+	return NewCircuitBreaker(negativeSt)
+}
+
 func init() {
 	defaultCB = NewCircuitBreaker(Settings{})
 	customCB = newCustom()
+	negativeDurationCB = newNegativeDurationCB()
 }
 
 func TestStateConstants(t *testing.T) {
@@ -136,6 +147,17 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateClosed, customCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts)
 	assert.False(t, customCB.expiry.IsZero())
+
+	negativeDurationCB := newNegativeDurationCB()
+	assert.Equal(t, "ncb", negativeDurationCB.name)
+	assert.Equal(t, uint32(1), negativeDurationCB.maxRequests)
+	assert.Equal(t, time.Duration(0)*time.Second, negativeDurationCB.interval)
+	assert.Equal(t, time.Duration(60)*time.Second, negativeDurationCB.timeout)
+	assert.NotNil(t, negativeDurationCB.readyToTrip)
+	assert.Nil(t, negativeDurationCB.onStateChange)
+	assert.Equal(t, StateClosed, negativeDurationCB.state)
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, negativeDurationCB.counts)
+	assert.True(t, negativeDurationCB.expiry.IsZero())
 }
 
 func TestDefaultCircuitBreaker(t *testing.T) {
