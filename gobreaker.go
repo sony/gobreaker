@@ -20,8 +20,6 @@ const (
 )
 
 var (
-	// ErrTooManyRequests is returned when the CB state is half open and the requests count is over the cb maxRequests
-	ErrTooManyRequests = errors.New("too many requests")
 	// ErrOpenState is returned when the CB state is open
 	ErrOpenState = errors.New("circuit breaker is open")
 )
@@ -52,6 +50,8 @@ type Counts struct {
 	ConsecutiveFailures  uint32
 }
 
+type readyToFn func(counts Counts) bool
+
 func (c *Counts) onRequest() {
 	c.Requests++
 }
@@ -80,9 +80,11 @@ func (c *Counts) clear() {
 //
 // Name is the name of the CircuitBreaker.
 //
-// MaxRequests is the maximum number of requests allowed to pass through
-// when the CircuitBreaker is half-open.
-// If MaxRequests is 0, the CircuitBreaker allows only 1 request.
+// ReadyToClose is called with a copy of Counts for each request in the half-open state.
+// If ReadyToClose returns true, the CircuitBreaker will be placed into the close state.
+// If ReadyToClose returns false, the CircuitBreaker will be placed into the open state.
+// If ReadyToClose is nil, default ReadyToClose is used.
+// Default ReadyToClose returns true when the number of consecutive successes is more than 1.
 //
 // Interval is the cyclic period of the closed state
 // for the CircuitBreaker to clear the internal Counts.
@@ -100,20 +102,20 @@ func (c *Counts) clear() {
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 type Settings struct {
 	Name          string
-	MaxRequests   uint32
+	ReadyToClose  readyToFn
 	Interval      time.Duration
 	Timeout       time.Duration
-	ReadyToTrip   func(counts Counts) bool
+	ReadyToTrip   readyToFn
 	OnStateChange func(name string, from State, to State)
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
 type CircuitBreaker struct {
 	name          string
-	maxRequests   uint32
+	readyToClose  readyToFn
 	interval      time.Duration
 	timeout       time.Duration
-	readyToTrip   func(counts Counts) bool
+	readyToTrip   readyToFn
 	onStateChange func(name string, from State, to State)
 
 	mutex      sync.Mutex
@@ -137,10 +139,10 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	cb.name = st.Name
 	cb.onStateChange = st.OnStateChange
 
-	if st.MaxRequests == 0 {
-		cb.maxRequests = 1
+	if st.ReadyToClose == nil {
+		cb.readyToClose = defaultReadyToClose
 	} else {
-		cb.maxRequests = st.MaxRequests
+		cb.readyToClose = st.ReadyToClose
 	}
 
 	if st.Interval <= 0 {
@@ -178,6 +180,10 @@ const defaultTimeout = time.Duration(60) * time.Second
 
 func defaultReadyToTrip(counts Counts) bool {
 	return counts.ConsecutiveFailures > 5
+}
+
+func defaultReadyToClose(counts Counts) bool {
+	return counts.ConsecutiveSuccesses >= 1
 }
 
 // Name returns the name of the CircuitBreaker.
@@ -252,8 +258,6 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 
 	if state == StateOpen {
 		return generation, ErrOpenState
-	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, ErrTooManyRequests
 	}
 
 	cb.counts.onRequest()
@@ -283,7 +287,7 @@ func (cb *CircuitBreaker) onSuccess(state State, now time.Time) {
 		cb.counts.onSuccess()
 	case StateHalfOpen:
 		cb.counts.onSuccess()
-		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
+		if cb.readyToClose(cb.counts) {
 			cb.setState(StateClosed, now)
 		}
 	}
@@ -296,8 +300,12 @@ func (cb *CircuitBreaker) onFailure(state State, now time.Time) {
 		if cb.readyToTrip(cb.counts) {
 			cb.setState(StateOpen, now)
 		}
+
 	case StateHalfOpen:
-		cb.setState(StateOpen, now)
+		cb.counts.onFailure()
+		if false == cb.readyToClose(cb.counts) {
+			cb.setState(StateOpen, now)
+		}
 	}
 }
 
@@ -307,11 +315,13 @@ func (cb *CircuitBreaker) currentState(now time.Time) (State, uint64) {
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
 			cb.toNewGeneration(now)
 		}
+
 	case StateOpen:
 		if cb.expiry.Before(now) {
 			cb.setState(StateHalfOpen, now)
 		}
 	}
+
 	return cb.state, cb.generation
 }
 
@@ -342,8 +352,10 @@ func (cb *CircuitBreaker) toNewGeneration(now time.Time) {
 		} else {
 			cb.expiry = now.Add(cb.interval)
 		}
+
 	case StateOpen:
 		cb.expiry = now.Add(cb.timeout)
+
 	default: // StateHalfOpen
 		cb.expiry = zero
 	}
