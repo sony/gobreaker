@@ -27,7 +27,7 @@ You can configure `CircuitBreaker` by the struct `Settings`:
 ```go
 type Settings struct {
 	Name          string
-	MaxRequests   uint32
+	ReadyToClose  func(counts Counts) (bool, bool)
 	Interval      time.Duration
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
@@ -38,9 +38,11 @@ type Settings struct {
 
 - `Name` is the name of the `CircuitBreaker`.
 
-- `MaxRequests` is the maximum number of requests allowed to pass through
-  when the `CircuitBreaker` is half-open.
-  If `MaxRequests` is 0, `CircuitBreaker` allows only 1 request.
+- `ReadyToClose` is called with a copy of `Counts` for each request in the half-open state.
+  If `ReadyToClose` returns true, the `CircuitBreaker` will be placed into the close state.
+  If `ReadyToClose` returns false, the `CircuitBreaker` will be placed into the open state if second returned value is true.
+  If `ReadyToClose` is nil, default `ReadyToClose` is used.
+  Default `ReadyToClose` returns true when the number of consecutive successes is more than 1.
 
 - `Interval` is the cyclic period of the closed state
   for `CircuitBreaker` to clear the internal `Counts`, described later in this section.
