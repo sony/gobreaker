@@ -50,8 +50,6 @@ type Counts struct {
 	ConsecutiveFailures  uint32
 }
 
-type readyToFn func(counts Counts) bool
-
 func (c *Counts) onRequest() {
 	c.Requests++
 }
@@ -82,7 +80,7 @@ func (c *Counts) clear() {
 //
 // ReadyToClose is called with a copy of Counts for each request in the half-open state.
 // If ReadyToClose returns true, the CircuitBreaker will be placed into the close state.
-// If ReadyToClose returns false, the CircuitBreaker will be placed into the open state.
+// If ReadyToClose returns false, the CircuitBreaker will be placed into the open state if second returned value is true.
 // If ReadyToClose is nil, default ReadyToClose is used.
 // Default ReadyToClose returns true when the number of consecutive successes is more than 1.
 //
@@ -102,20 +100,20 @@ func (c *Counts) clear() {
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 type Settings struct {
 	Name          string
-	ReadyToClose  readyToFn
+	ReadyToClose  func(counts Counts) (bool, bool)
 	Interval      time.Duration
 	Timeout       time.Duration
-	ReadyToTrip   readyToFn
+	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
 type CircuitBreaker struct {
 	name          string
-	readyToClose  readyToFn
+	readyToClose  func(counts Counts) (bool, bool)
 	interval      time.Duration
 	timeout       time.Duration
-	readyToTrip   readyToFn
+	readyToTrip   func(counts Counts) bool
 	onStateChange func(name string, from State, to State)
 
 	mutex      sync.Mutex
@@ -182,8 +180,8 @@ func defaultReadyToTrip(counts Counts) bool {
 	return counts.ConsecutiveFailures > 5
 }
 
-func defaultReadyToClose(counts Counts) bool {
-	return counts.ConsecutiveSuccesses >= 1
+func defaultReadyToClose(counts Counts) (bool, bool) {
+	return counts.ConsecutiveSuccesses >= 1, true
 }
 
 // Name returns the name of the CircuitBreaker.
@@ -287,7 +285,7 @@ func (cb *CircuitBreaker) onSuccess(state State, now time.Time) {
 		cb.counts.onSuccess()
 	case StateHalfOpen:
 		cb.counts.onSuccess()
-		if cb.readyToClose(cb.counts) {
+		if ok, _ := cb.readyToClose(cb.counts); ok {
 			cb.setState(StateClosed, now)
 		}
 	}
@@ -303,7 +301,8 @@ func (cb *CircuitBreaker) onFailure(state State, now time.Time) {
 
 	case StateHalfOpen:
 		cb.counts.onFailure()
-		if false == cb.readyToClose(cb.counts) {
+		ok, nowOpen := cb.readyToClose(cb.counts)
+		if !ok && nowOpen {
 			cb.setState(StateOpen, now)
 		}
 	}

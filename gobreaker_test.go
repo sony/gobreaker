@@ -81,8 +81,20 @@ func causePanic(cb *CircuitBreaker) error {
 func newCustom() *CircuitBreaker {
 	var customSt Settings
 	customSt.Name = "cb"
-	customSt.ReadyToClose = func(counts Counts) bool {
-		return counts.ConsecutiveSuccesses >= 3
+	customSt.ReadyToClose = func(counts Counts) (bool, bool) {
+		if counts.ConsecutiveSuccesses >= 3 {
+			return true, true
+		}
+
+		numReqs := counts.Requests
+		failureRatio := float64(counts.TotalFailures) / float64(numReqs)
+
+		var nowOpen bool
+		if numReqs >= 3 && failureRatio >= 0.6 {
+			nowOpen = true
+		}
+
+		return false, nowOpen
 	}
 	customSt.Interval = time.Duration(30) * time.Second
 	customSt.Timeout = time.Duration(90) * time.Second
@@ -260,7 +272,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	ch := succeedLater(customCB, time.Duration(100)*time.Millisecond) // 3 consecutive successes
 	time.Sleep(time.Duration(50) * time.Millisecond)
 	assert.Equal(t, Counts{3, 2, 0, 2, 0}, customCB.counts)
-	assert.Nil(t, succeed(customCB)) // over MaxRequests
+	assert.Nil(t, succeed(customCB))
 	assert.Nil(t, <-ch)
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts)
