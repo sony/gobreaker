@@ -232,7 +232,7 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, cb.shouldTrip(err))
+	cb.afterRequest(generation, !cb.shouldTrip(err))
 	return result, err
 }
 
