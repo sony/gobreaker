@@ -99,10 +99,10 @@ func (c *Counts) clear() {
 //
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 //
-// ShouldTrip is called with the error returned from the request, if not nil.
-// If ShouldTrip returns true, the error is considered a failure, and is counted towards tripping the circuit breaker.
-// If ShouldTrip returns false, the error will be returned to the caller without tripping the circuit breaker.
-// If ShouldTrip is nil, default ShouldTrip is used, which returns true for all non-nil errors.
+// IsSuccessful is called with the error returned from the request, if not nil.
+// If IsSuccessful returns true, the error is considered a failure, and is counted towards tripping the circuit breaker.
+// If IsSuccessful returns false, the error will be returned to the caller without tripping the circuit breaker.
+// If IsSuccessful is nil, default IsSuccessful is used, which returns true for all non-nil errors.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -110,7 +110,7 @@ type Settings struct {
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
-	ShouldTrip    func(err error) bool
+	IsSuccessful  func(err error) bool
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
@@ -168,10 +168,10 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 		cb.readyToTrip = st.ReadyToTrip
 	}
 
-	if st.ShouldTrip == nil {
+	if st.IsSuccessful == nil {
 		cb.shouldTrip = defaultShouldTrip
 	} else {
-		cb.shouldTrip = st.ShouldTrip
+		cb.shouldTrip = st.IsSuccessful
 	}
 
 	cb.toNewGeneration(time.Now())
