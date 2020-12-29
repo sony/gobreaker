@@ -100,9 +100,9 @@ func (c *Counts) clear() {
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 //
 // IsSuccessful is called with the error returned from the request, if not nil.
-// If IsSuccessful returns true, the error is considered a failure, and is counted towards tripping the circuit breaker.
-// If IsSuccessful returns false, the error will be returned to the caller without tripping the circuit breaker.
-// If IsSuccessful is nil, default IsSuccessful is used, which returns true for all non-nil errors.
+// If IsSuccessful returns false, the error is considered a failure, and is counted towards tripping the circuit breaker.
+// If IsSuccessful returns true, the error will be returned to the caller without tripping the circuit breaker.
+// If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -120,7 +120,7 @@ type CircuitBreaker struct {
 	interval      time.Duration
 	timeout       time.Duration
 	readyToTrip   func(counts Counts) bool
-	shouldTrip    func(err error) bool
+	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
 
 	mutex      sync.Mutex
@@ -169,9 +169,9 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 	}
 
 	if st.IsSuccessful == nil {
-		cb.shouldTrip = defaultShouldTrip
+		cb.isSuccessful = defaultIsSuccessful
 	} else {
-		cb.shouldTrip = st.IsSuccessful
+		cb.isSuccessful = st.IsSuccessful
 	}
 
 	cb.toNewGeneration(time.Now())
@@ -193,7 +193,7 @@ func defaultReadyToTrip(counts Counts) bool {
 	return counts.ConsecutiveFailures > 5
 }
 
-func defaultShouldTrip(err error) bool {
+func defaultIsSuccessful(err error) bool {
 	return err != nil
 }
 
@@ -232,7 +232,7 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, !cb.shouldTrip(err))
+	cb.afterRequest(generation, cb.isSuccessful(err))
 	return result, err
 }
 
