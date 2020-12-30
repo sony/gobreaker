@@ -194,7 +194,7 @@ func defaultReadyToTrip(counts Counts) bool {
 }
 
 func defaultIsSuccessful(err error) bool {
-	return err != nil
+	return err == nil
 }
 
 // Name returns the name of the CircuitBreaker.
