@@ -344,6 +344,30 @@ func TestGeneration(t *testing.T) {
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts)
 }
 
+func TestCustomIsSuccessful(t *testing.T) {
+	isSuccessful := func(error) bool {
+		return true
+	}
+	cb := NewCircuitBreaker(Settings{IsSuccessful: isSuccessful})
+
+	for i := 0; i < 5; i++ {
+		assert.Nil(t, fail(cb))
+	}
+	assert.Equal(t, StateClosed, cb.State())
+	assert.Equal(t, Counts{5, 5, 0, 5, 0}, cb.counts)
+
+	cb.counts.clear()
+
+	cb.isSuccessful = func(err error) bool {
+		return err == nil
+	}
+	for i := 0; i < 6; i++ {
+		assert.Nil(t, fail(cb))
+	}
+	assert.Equal(t, StateOpen, cb.State())
+
+}
+
 func TestCircuitBreakerInParallel(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
