@@ -98,6 +98,11 @@ func (c *Counts) clear() {
 // Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
 //
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
+//
+// IsSuccessful is called with the error returned from the request, if not nil.
+// If IsSuccessful returns false, the error is considered a failure, and is counted towards tripping the circuit breaker.
+// If IsSuccessful returns true, the error will be returned to the caller without tripping the circuit breaker.
+// If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -105,6 +110,7 @@ type Settings struct {
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
+	IsSuccessful  func(err error) bool
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
@@ -114,6 +120,7 @@ type CircuitBreaker struct {
 	interval      time.Duration
 	timeout       time.Duration
 	readyToTrip   func(counts Counts) bool
+	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
 
 	mutex      sync.Mutex
@@ -161,6 +168,12 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 		cb.readyToTrip = st.ReadyToTrip
 	}
 
+	if st.IsSuccessful == nil {
+		cb.isSuccessful = defaultIsSuccessful
+	} else {
+		cb.isSuccessful = st.IsSuccessful
+	}
+
 	cb.toNewGeneration(time.Now())
 
 	return cb
@@ -178,6 +191,10 @@ const defaultTimeout = time.Duration(60) * time.Second
 
 func defaultReadyToTrip(counts Counts) bool {
 	return counts.ConsecutiveFailures > 5
+}
+
+func defaultIsSuccessful(err error) bool {
+	return err == nil
 }
 
 // Name returns the name of the CircuitBreaker.
@@ -215,7 +232,7 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, err == nil)
+	cb.afterRequest(generation, cb.isSuccessful(err))
 	return result, err
 }
 
