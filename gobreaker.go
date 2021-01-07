@@ -189,8 +189,11 @@ func (cb *CircuitBreaker) State() State {
 	return state
 }
 
-// Returns internal counters
+// Counts returns internal counters
 func (cb *CircuitBreaker) Counts() Counts {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
 	return cb.counts
 }
 
@@ -228,7 +231,7 @@ func (tscb *TwoStepCircuitBreaker) State() State {
 	return tscb.cb.State()
 }
 
-// Returns internal counters
+// Counts returns internal counters
 func (tscb *TwoStepCircuitBreaker) Counts() Counts {
 	return tscb.cb.Counts()
 }
