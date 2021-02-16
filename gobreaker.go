@@ -212,6 +212,14 @@ func (cb *CircuitBreaker) State() State {
 	return state
 }
 
+// Counts returns internal counters
+func (cb *CircuitBreaker) Counts() Counts {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	return cb.counts
+}
+
 // Execute runs the given request if the CircuitBreaker accepts it.
 // Execute returns an error instantly if the CircuitBreaker rejects the request.
 // Otherwise, Execute returns the result of the request.
@@ -244,6 +252,11 @@ func (tscb *TwoStepCircuitBreaker) Name() string {
 // State returns the current state of the TwoStepCircuitBreaker.
 func (tscb *TwoStepCircuitBreaker) State() State {
 	return tscb.cb.State()
+}
+
+// Counts returns internal counters
+func (tscb *TwoStepCircuitBreaker) Counts() Counts {
+	return tscb.cb.Counts()
 }
 
 // Allow checks if a new request can proceed. It returns a callback that should be used to
