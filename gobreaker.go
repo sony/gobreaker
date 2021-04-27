@@ -70,8 +70,6 @@ func (c *Counts) onFailure() {
 
 func (c *Counts) clear() {
 	c.Requests = 0
-	c.TotalSuccesses = 0
-	c.TotalFailures = 0
 	c.ConsecutiveSuccesses = 0
 	c.ConsecutiveFailures = 0
 }
