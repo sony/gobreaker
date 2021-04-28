@@ -49,7 +49,11 @@ type Counts struct {
 	TotalSuccesses       uint32
 	TotalFailures        uint32
 	ConsecutiveSuccesses uint32
-	ConsecutiveFailures  uint32
+	// internalConsecutiveFailures is for gobreaker to keep track of what is happening.
+	internalConsecutiveFailures uint32
+	// ConsecutiveFailures tracks consecutive failures, including between different circuit breaker states.
+	// This is not reset when state changes i.e., from open to half-open.
+	ConsecutiveFailures uint32
 }
 
 func (c *Counts) onRequest() {
@@ -59,21 +63,21 @@ func (c *Counts) onRequest() {
 func (c *Counts) onSuccess() {
 	c.TotalSuccesses++
 	c.ConsecutiveSuccesses++
+	c.internalConsecutiveFailures = 0
 	c.ConsecutiveFailures = 0
 }
 
 func (c *Counts) onFailure() {
 	c.TotalFailures++
-	c.ConsecutiveFailures++
+	c.internalConsecutiveFailures++
 	c.ConsecutiveSuccesses = 0
+	c.ConsecutiveFailures++
 }
 
 func (c *Counts) clear() {
 	c.Requests = 0
-	c.TotalSuccesses = 0
-	c.TotalFailures = 0
 	c.ConsecutiveSuccesses = 0
-	c.ConsecutiveFailures = 0
+	c.internalConsecutiveFailures = 0
 }
 
 // Settings configures CircuitBreaker:
@@ -190,7 +194,7 @@ const defaultInterval = time.Duration(0) * time.Second
 const defaultTimeout = time.Duration(60) * time.Second
 
 func defaultReadyToTrip(counts Counts) bool {
-	return counts.ConsecutiveFailures > 5
+	return counts.internalConsecutiveFailures > 5
 }
 
 func defaultIsSuccessful(err error) bool {
