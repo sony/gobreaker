@@ -8,17 +8,17 @@ jobs:
         os: [ubuntu-latest]
     runs-on: ${{matrix.os}}
     steps:
-    - name: setup
+    - name: Set up Go
       uses: actions/setup-go@v2
       with:
         go-version: ${{matrix.go-version}}
-    - name: checkout
+    - name: Checkout
       uses: actions/checkout@v2
     - name: gofmt
       run: test -z "`gofmt -l .`"
     - name: golint
       run: test -z "`golint ./...`"
-    - name: go-test
+    - name: go test
       run: go test -v ./...
-    - name: run example
+    - name: Run example
       run: cd example && go build -o http_breaker && ./http_breaker
