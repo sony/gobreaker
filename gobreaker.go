@@ -101,8 +101,8 @@ func (c *Counts) clear() {
 //
 // IsSuccessful is called with the error returned from a request.
 // If IsSuccessful returns true, the error is counted as a success.
-// If IsSuccessful returns false, the error is counted as a failure.
-// If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors..
+// Otherwise the error is counted as a failure.
+// If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
