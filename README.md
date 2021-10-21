@@ -32,6 +32,7 @@ type Settings struct {
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
+	IsSuccessful  func(err error) bool
 }
 ```
 
@@ -55,6 +56,11 @@ type Settings struct {
   Default `ReadyToTrip` returns true when the number of consecutive failures is more than 5.
 
 - `OnStateChange` is called whenever the state of `CircuitBreaker` changes.
+
+- `IsSuccessful` is called with the error returned from a request.
+  If `IsSuccessful` returns true, the error is counted as a success.
+  Otherwise the error is counted as a failure.
+  If `IsSuccessful` is nil, default `IsSuccessful` is used, which returns false for all non-nil errors.
 
 The struct `Counts` holds the numbers of requests and their successes/failures:
 

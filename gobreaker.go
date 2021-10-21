@@ -99,9 +99,9 @@ func (c *Counts) clear() {
 //
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 //
-// IsSuccessful is called with the error returned from the request, if not nil.
-// If IsSuccessful returns false, the error is considered a failure, and is counted towards tripping the circuit breaker.
-// If IsSuccessful returns true, the error will be returned to the caller without tripping the circuit breaker.
+// IsSuccessful is called with the error returned from a request.
+// If IsSuccessful returns true, the error is counted as a success.
+// Otherwise the error is counted as a failure.
 // If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
 type Settings struct {
 	Name          string
