@@ -126,3 +126,11 @@ See [LICENSE](https://github.com/sony/gobreaker/blob/master/LICENSE) for details
 
 
 [repo-url]: https://github.com/sony/gobreaker
+
+
+
+Derivative
+-------
+
+- [C++ circuit breaker](https://github.com/ikenchina/cppbreaker)
+
