@@ -2,6 +2,8 @@ gobreaker
 =========
 
 [![GoDoc](https://godoc.org/github.com/sony/gobreaker?status.svg)](http://godoc.org/github.com/sony/gobreaker)
+[![Build Status](https://travis-ci.org/sony/gobreaker.svg?branch=master)](https://travis-ci.org/sony/gobreaker)
+[![Coverage Status](https://coveralls.io/repos/sony/gobreaker/badge.svg?branch=master&service=github)](https://coveralls.io/github/sony/gobreaker?branch=master)
 
 [gobreaker][repo-url] implements the [Circuit Breaker pattern](https://msdn.microsoft.com/en-us/library/dn589784.aspx) in Go.
 
@@ -9,7 +11,7 @@ Installation
 ------------
 
 ```
-go get github.com/sony/gobreaker
+go get github.com/rocyou/gobreaker
 ```
 
 Usage
@@ -27,20 +29,21 @@ You can configure `CircuitBreaker` by the struct `Settings`:
 ```go
 type Settings struct {
 	Name          string
-	MaxRequests   uint32
+	ReadyToClose  func(counts Counts) (bool, bool)
 	Interval      time.Duration
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
-	IsSuccessful  func(err error) bool
 }
 ```
 
 - `Name` is the name of the `CircuitBreaker`.
 
-- `MaxRequests` is the maximum number of requests allowed to pass through
-  when the `CircuitBreaker` is half-open.
-  If `MaxRequests` is 0, `CircuitBreaker` allows only 1 request.
+- `ReadyToClose` is called with a copy of `Counts` for each request in the half-open state.
+  If `ReadyToClose` returns true, the `CircuitBreaker` will be placed into the close state.
+  If `ReadyToClose` returns false, the `CircuitBreaker` will be placed into the open state if second returned value is true.
+  If `ReadyToClose` is nil, default `ReadyToClose` is used.
+  Default `ReadyToClose` returns true when the number of consecutive successes is more than 1.
 
 - `Interval` is the cyclic period of the closed state
   for `CircuitBreaker` to clear the internal `Counts`, described later in this section.
@@ -56,11 +59,6 @@ type Settings struct {
   Default `ReadyToTrip` returns true when the number of consecutive failures is more than 5.
 
 - `OnStateChange` is called whenever the state of `CircuitBreaker` changes.
-
-- `IsSuccessful` is called with the error returned from a request.
-  If `IsSuccessful` returns true, the error is counted as a success.
-  Otherwise the error is counted as a failure.
-  If `IsSuccessful` is nil, default `IsSuccessful` is used, which returns false for all non-nil errors.
 
 The struct `Counts` holds the numbers of requests and their successes/failures:
 
