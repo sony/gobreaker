@@ -1,5 +1,5 @@
-module github.com/sony/gobreaker
+module github.com/rocyou/gobreaker
 
-go 1.12
+go 1.16
 
-require github.com/stretchr/testify v1.3.0
+require github.com/stretchr/testify v1.7.0
