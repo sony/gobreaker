@@ -21,7 +21,6 @@ func init() {
 	st.Interval = time.Duration(0) * time.Second
 	st.Timeout = time.Duration(3) * time.Second
 	st.ReadyToClose = func(counts gobreaker.Counts) (bool, bool) {
-
 		if counts.TotalSuccesses >= 2 {
 			return true, true
 		}
@@ -31,12 +30,10 @@ func init() {
 		}
 		return false, nowOpen
 	}
-
-	st.OnStateChange = func(name string,from gobreaker.State,to gobreaker.State) {
+	st.OnStateChange = func(name string, from gobreaker.State, to gobreaker.State) {
 		fmt.Printf("change state from:%+v to:%+v\n", from, to)
 		//implement your action here
 	}
-
 	cb = gobreaker.NewCircuitBreaker(st)
 }
 
