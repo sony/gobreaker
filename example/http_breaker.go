@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/rocyou/gobreaker"
 )
@@ -15,8 +16,25 @@ func init() {
 	var st gobreaker.Settings
 	st.Name = "HTTP GET"
 	st.ReadyToTrip = func(counts gobreaker.Counts) bool {
-		failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-		return counts.Requests >= 3 && failureRatio >= 0.6
+		return counts.ConsecutiveFailures >= 3
+	}
+	st.Interval = time.Duration(0) * time.Second
+	st.Timeout = time.Duration(3) * time.Second
+	st.ReadyToClose = func(counts gobreaker.Counts) (bool, bool) {
+
+		if counts.TotalSuccesses >= 2 {
+			return true, true
+		}
+		var nowOpen bool
+		if counts.ConsecutiveFailures >= 3 {
+			nowOpen = true
+		}
+		return false, nowOpen
+	}
+
+	st.OnStateChange = func(name string,from gobreaker.State,to gobreaker.State) {
+		fmt.Printf("change state from:%+v to:%+v\n", from, to)
+		//implement your action here
 	}
 
 	cb = gobreaker.NewCircuitBreaker(st)
@@ -29,19 +47,16 @@ func Get(url string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
-
 		return body, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	return body.([]byte), nil
 }
 
