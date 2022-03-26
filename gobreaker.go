@@ -357,6 +357,7 @@ func (cb *CircuitBreaker) setState(state State, now time.Time) {
 
 	if cb.onStateChange != nil {
 		go cb.onStateChange(cb.name, prev, state)
+		runtime.Gosched()
 	}
 }
 
