@@ -314,7 +314,7 @@ func (cb *CircuitBreaker) onSuccess(state State, now time.Time) {
 	case StateHalfOpen:
 		cb.counts.onSuccess()
 		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
-			cb.setState(StateClosed, now)
+			cb.SetState(StateClosed, now)
 		}
 	}
 }
@@ -324,10 +324,10 @@ func (cb *CircuitBreaker) onFailure(state State, now time.Time) {
 	case StateClosed:
 		cb.counts.onFailure()
 		if cb.readyToTrip(cb.counts) {
-			cb.setState(StateOpen, now)
+			cb.SetState(StateOpen, now)
 		}
 	case StateHalfOpen:
-		cb.setState(StateOpen, now)
+		cb.SetState(StateOpen, now)
 	}
 }
 
@@ -339,13 +339,13 @@ func (cb *CircuitBreaker) currentState(now time.Time) (State, uint64) {
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
-			cb.setState(StateHalfOpen, now)
+			cb.SetState(StateHalfOpen, now)
 		}
 	}
 	return cb.state, cb.generation
 }
 
-func (cb *CircuitBreaker) setState(state State, now time.Time) {
+func (cb *CircuitBreaker) SetState(state State, now time.Time) {
 	if cb.state == state {
 		return
 	}
