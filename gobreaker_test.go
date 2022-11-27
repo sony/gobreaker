@@ -45,12 +45,12 @@ func succeedLater(cb *CircuitBreaker, delay time.Duration) <-chan error {
 }
 
 func succeed2Step(cb *TwoStepCircuitBreaker) error {
-	done, err := cb.Allow()
+	afterRequestCallback, err := cb.Allow()
 	if err != nil {
 		return err
 	}
 
-	done(true)
+	afterRequestCallback(true)
 	return nil
 }
 
@@ -64,12 +64,12 @@ func fail(cb *CircuitBreaker) error {
 }
 
 func fail2Step(cb *TwoStepCircuitBreaker) error {
-	done, err := cb.Allow()
+	afterRequestCallback, err := cb.Allow()
 	if err != nil {
 		return err
 	}
 
-	done(false)
+	afterRequestCallback(false)
 	return nil
 }
 
