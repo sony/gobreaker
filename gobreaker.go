@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/commitsmart/gobreaker/domain"
 )
 
 // State is a type that represents a state of CircuitBreaker.
@@ -225,10 +227,10 @@ func (cb *CircuitBreaker) Counts() Counts {
 // Otherwise, Execute returns the result of the request.
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
-func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error) {
+func (cb *CircuitBreaker) Execute(req func() ([]byte, *domain.ErrorMessageBody, error)) ([]byte, *domain.ErrorMessageBody, error) {
 	generation, err := cb.beforeRequest()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defer func() {
@@ -239,9 +241,33 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 		}
 	}()
 
-	result, err := req()
+	result, domainErr, err := req()
 	cb.afterRequest(generation, cb.isSuccessful(err))
-	return result, err
+	return result, domainErr, err
+}
+
+// ExecuteWithCustomError runs the given request if the CircuitBreaker accepts it.
+// ExecuteWithCustomError returns an error instantly if the CircuitBreaker rejects the request.
+// Otherwise, Execute returns the results of the request.
+// If a panic occurs in the request, the CircuitBreaker handles it as an error
+// and causes the same panic again.
+func (cb *CircuitBreaker) ExecuteWithCustomError(req func() ([]byte, *domain.ErrorMessageBody, error)) ([]byte, *domain.ErrorMessageBody, error) {
+	generation, err := cb.beforeRequest()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	defer func() {
+		e := recover()
+		if e != nil {
+			cb.afterRequest(generation, false)
+			panic(e)
+		}
+	}()
+
+	result, domainErr, err := req()
+	cb.afterRequest(generation, cb.isSuccessful(err))
+	return result, domainErr, err
 }
 
 // Name returns the name of the TwoStepCircuitBreaker.
