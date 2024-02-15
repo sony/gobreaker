@@ -11,7 +11,6 @@ import (
 
 var defaultCB *CircuitBreaker
 var customCB *CircuitBreaker
-var negativeDurationCB *CircuitBreaker
 
 type StateChange struct {
 	name string
@@ -111,7 +110,6 @@ func newNegativeDurationCB() *CircuitBreaker {
 func init() {
 	defaultCB = NewCircuitBreaker(Settings{})
 	customCB = newCustom()
-	negativeDurationCB = newNegativeDurationCB()
 }
 
 func TestStateConstants(t *testing.T) {
