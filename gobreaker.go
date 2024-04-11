@@ -331,8 +331,7 @@ func (cb *CircuitBreaker) onFailure(state State, now time.Time) {
 
 	case StateHalfOpen:
 		cb.counts.onFailure()
-		ok, nowOpen := cb.readyToClose(cb.counts)
-		if !ok && nowOpen {
+		if ok, nowOpen := cb.readyToClose(cb.counts); !ok && nowOpen {
 			cb.setState(StateOpen, now)
 		}
 	}
