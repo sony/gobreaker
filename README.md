@@ -9,7 +9,7 @@ Installation
 ------------
 
 ```
-go get github.com/sony/gobreaker
+go get github.com/sony/gobreaker/v2
 ```
 
 Usage
@@ -19,7 +19,7 @@ The struct `CircuitBreaker` is a state machine to prevent sending requests that 
 The function `NewCircuitBreaker` creates a new `CircuitBreaker`.
 
 ```go
-func NewCircuitBreaker(st Settings) *CircuitBreaker
+func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T]
 ```
 
 You can configure `CircuitBreaker` by the struct `Settings`:
@@ -81,7 +81,7 @@ on the change of the state or at the closed-state intervals.
 `CircuitBreaker` can wrap any function to send a request:
 
 ```go
-func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error)
+func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error)
 ```
 
 The method `Execute` runs the given request if `CircuitBreaker` accepts it.
@@ -90,66 +90,8 @@ Otherwise, `Execute` returns the result of the request.
 If a panic occurs in the request, `CircuitBreaker` handles it as an error
 and causes the same panic again.
 
-
-V2 Implementation
----
-
-The [v2 implementation](./v2) provides the same CircuitBreaker logic, but with support for generics in Go.
-
-This change allows for CircuitBreaker instances to specify the handled type directly, and skips type-casting an `any` 
-or `interface{}` type into the desired target one.
-
-This change mostly focuses on the [CircuitBreaker's Execute](./v2/gobreaker.go#L228) method, which accepts an 
-executable function of a given type:
-
-```go
-func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) 
-```
-
-
 Example
 -------
-
-> *v1 Example*
-
-```go
-import (
-  "fmt"
-  "io"
-  "log"
-  "net/http"
-  
-  "github.com/sony/gobreaker"
-)
-
-var cb *breaker.CircuitBreaker
-
-func Get(url string) ([]byte, error) {
-	body, err := cb.Execute(func() (interface{}, error) {
-		resp, err := http.Get(url)
-		if err != nil {
-			return nil, err
-		}
-
-		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-
-		return body, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return body.([]byte), nil
-}
-```
-
-
-> *v2 Example*
-
 
 ```go
 import (
@@ -186,7 +128,7 @@ func Get(url string) ([]byte, error) {
 }
 ```
 
-See [example](https://github.com/sony/gobreaker/blob/master/example) for details.
+See [example](https://github.com/sony/gobreaker/blob/master/v2/example) for details.
 
 License
 -------
