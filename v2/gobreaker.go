@@ -226,11 +226,10 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
 func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
-	var zero T
-
 	generation, err := cb.beforeRequest()
 	if err != nil {
-		return zero, err
+		var defaultValue T
+		return defaultValue, err
 	}
 
 	defer func() {
