@@ -95,37 +95,28 @@ Example
 -------
 
 ```go
-import (
-  "fmt"
-  "io"
-  "log"
-  "net/http"
-  
-  "github.com/sony/gobreaker/v2"
-)
-
 var cb *gobreaker.CircuitBreaker[[]byte]
 
 func Get(url string) ([]byte, error) {
-  body, err := cb.Execute(func() ([]byte, error) {
-    resp, err := http.Get(url)
-    if err != nil {
-      return nil, err
-    }
-    
-    defer resp.Body.Close()
-    body, err := io.ReadAll(resp.Body)
-    if err != nil {
-      return nil, err
-    }
-    
-    return body, nil
-  })
-  if err != nil {
-    return nil, err
-  }
-  
-  return body, nil
+	body, err := cb.Execute(func() ([]byte, error) {
+		resp, err := http.Get(url)
+		if err != nil {
+			return nil, err
+		}
+
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		return body, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return body, nil
 }
 ```
 
