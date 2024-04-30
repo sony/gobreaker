@@ -90,10 +90,38 @@ Otherwise, `Execute` returns the result of the request.
 If a panic occurs in the request, `CircuitBreaker` handles it as an error
 and causes the same panic again.
 
+
+V2 Implementation
+---
+
+The [v2 implementation](./v2) provides the same CircuitBreaker logic, but with support for generics in Go.
+
+This change allows for CircuitBreaker instances to specify the handled type directly, and skips type-casting an `any` 
+or `interface{}` type into the desired target one.
+
+This change mostly focuses on the [CircuitBreaker's Execute](./v2/gobreaker.go#L228) method, which accepts an 
+executable function of a given type:
+
+```go
+func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) 
+```
+
+
 Example
 -------
 
+> *v1 Example*
+
 ```go
+import (
+  "fmt"
+  "io"
+  "log"
+  "net/http"
+  
+  "github.com/sony/gobreaker"
+)
+
 var cb *breaker.CircuitBreaker
 
 func Get(url string) ([]byte, error) {
@@ -116,6 +144,45 @@ func Get(url string) ([]byte, error) {
 	}
 
 	return body.([]byte), nil
+}
+```
+
+
+> *v2 Example*
+
+
+```go
+import (
+  "fmt"
+  "io"
+  "log"
+  "net/http"
+  
+  "github.com/sony/gobreaker/v2"
+)
+
+var cb *gobreaker.CircuitBreaker[[]byte]
+
+func Get(url string) ([]byte, error) {
+  body, err := cb.Execute(func() ([]byte, error) {
+    resp, err := http.Get(url)
+    if err != nil {
+      return nil, err
+    }
+    
+    defer resp.Body.Close()
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+      return nil, err
+    }
+    
+    return body, nil
+  })
+  if err != nil {
+    return nil, err
+  }
+  
+  return body, nil
 }
 ```
 
