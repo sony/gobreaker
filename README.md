@@ -9,7 +9,7 @@ Installation
 ------------
 
 ```
-go get github.com/sony/gobreaker
+go get github.com/sony/gobreaker/v2
 ```
 
 Usage
@@ -17,9 +17,10 @@ Usage
 
 The struct `CircuitBreaker` is a state machine to prevent sending requests that are likely to fail.
 The function `NewCircuitBreaker` creates a new `CircuitBreaker`.
+The type parameter `T` specifies the return type of requests.
 
 ```go
-func NewCircuitBreaker(st Settings) *CircuitBreaker
+func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T]
 ```
 
 You can configure `CircuitBreaker` by the struct `Settings`:
@@ -81,7 +82,7 @@ on the change of the state or at the closed-state intervals.
 `CircuitBreaker` can wrap any function to send a request:
 
 ```go
-func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error)
+func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error)
 ```
 
 The method `Execute` runs the given request if `CircuitBreaker` accepts it.
@@ -94,17 +95,17 @@ Example
 -------
 
 ```go
-var cb *breaker.CircuitBreaker
+var cb *gobreaker.CircuitBreaker[[]byte]
 
 func Get(url string) ([]byte, error) {
-	body, err := cb.Execute(func() (interface{}, error) {
+	body, err := cb.Execute(func() ([]byte, error) {
 		resp, err := http.Get(url)
 		if err != nil {
 			return nil, err
 		}
 
 		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -115,11 +116,11 @@ func Get(url string) ([]byte, error) {
 		return nil, err
 	}
 
-	return body.([]byte), nil
+	return body, nil
 }
 ```
 
-See [example](https://github.com/sony/gobreaker/blob/master/example) for details.
+See [example](https://github.com/sony/gobreaker/blob/master/v2/example) for details.
 
 License
 -------
