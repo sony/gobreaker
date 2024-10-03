@@ -17,7 +17,7 @@ Usage
 
 The struct `CircuitBreaker` is a state machine to prevent sending requests that are likely to fail.
 The function `NewCircuitBreaker` creates a new `CircuitBreaker`.
-The type parameter `T` specifies the return type of requests.
+The type parameter `T` specifies the return type of requests. test
 
 ```go
 func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T]
