@@ -339,7 +339,8 @@ func (cb *CircuitBreaker) currentState(now time.Time) (State, uint64) {
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
-			cb.setState(StateHalfOpen, now)
+			// cb.setState(StateHalfOpen, now)
+			cb.setState(StateClosed, now)
 		}
 	}
 	return cb.state, cb.generation
