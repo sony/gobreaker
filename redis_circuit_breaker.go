@@ -9,32 +9,29 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type CacheClient interface {
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+}
+
 // RedisCircuitBreaker extends CircuitBreaker with Redis-based state storage
 type RedisCircuitBreaker struct {
 	*CircuitBreaker
-	redisClient RedisClientInterface
-	redisKey    string
-}
-
-type RedisClientInterface interface {
-	Get(ctx context.Context, key string) *redis.StringCmd
-	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+	redisClient CacheClient
 }
 
 // RedisSettings extends Settings with Redis configuration
 type RedisSettings struct {
 	Settings
-	RedisClient RedisClientInterface
-	RedisKey    string
+	RedisKey string
 }
 
 // NewRedisCircuitBreaker returns a new RedisCircuitBreaker configured with the given RedisSettings
-func NewRedisCircuitBreaker(st RedisSettings) *RedisCircuitBreaker {
-	cb := NewCircuitBreaker(st.Settings)
+func NewRedisCircuitBreaker(redisClient CacheClient, settings RedisSettings) *RedisCircuitBreaker {
+	cb := NewCircuitBreaker(settings.Settings)
 	return &RedisCircuitBreaker{
 		CircuitBreaker: cb,
-		redisClient:    st.RedisClient,
-		redisKey:       st.RedisKey,
+		redisClient:    redisClient,
 	}
 }
 
@@ -216,9 +213,13 @@ func (rcb *RedisCircuitBreaker) toNewGeneration(state *RedisState, now time.Time
 	}
 }
 
+func (rcb *RedisCircuitBreaker) getRedisKey() string {
+	return "cb:" + rcb.name
+}
+
 func (rcb *RedisCircuitBreaker) getRedisState(ctx context.Context) (RedisState, error) {
 	var state RedisState
-	data, err := rcb.redisClient.Get(ctx, rcb.redisKey).Bytes()
+	data, err := rcb.redisClient.Get(ctx, rcb.getRedisKey()).Bytes()
 	if err == redis.Nil {
 		// Key doesn't exist, return default state
 		return RedisState{State: StateClosed}, nil
@@ -236,5 +237,5 @@ func (rcb *RedisCircuitBreaker) setRedisState(ctx context.Context, state RedisSt
 		return err
 	}
 
-	return rcb.redisClient.Set(ctx, rcb.redisKey, data, 0).Err()
+	return rcb.redisClient.Set(ctx, rcb.getRedisKey(), data, 0).Err()
 }

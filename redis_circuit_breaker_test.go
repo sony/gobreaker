@@ -24,7 +24,7 @@ func setupTestWithMiniredis() (*RedisCircuitBreaker, *miniredis.Miniredis, *redi
 		Addr: mr.Addr(),
 	})
 
-	return NewRedisCircuitBreaker(RedisSettings{
+	return NewRedisCircuitBreaker(client, RedisSettings{
 		Settings: Settings{
 			Name:        "TestBreaker",
 			MaxRequests: 3,
@@ -34,8 +34,6 @@ func setupTestWithMiniredis() (*RedisCircuitBreaker, *miniredis.Miniredis, *redi
 				return counts.ConsecutiveFailures > 5
 			},
 		},
-		RedisClient: client,
-		RedisKey:    "test_breaker",
 	}), mr, client
 }
 
@@ -179,7 +177,7 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	customRCB = NewRedisCircuitBreaker(RedisSettings{
+	customRCB = NewRedisCircuitBreaker(client, RedisSettings{
 		Settings: Settings{
 			Name:        "CustomBreaker",
 			MaxRequests: 3,
@@ -191,8 +189,6 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 				return numReqs >= 3 && failureRatio >= 0.6
 			},
 		},
-		RedisClient: client,
-		RedisKey:    "custom_breaker",
 	})
 
 	t.Run("Initialization", func(t *testing.T) {
