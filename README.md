@@ -1,133 +1,216 @@
-gobreaker
-=========
+# Offline Payments Circuit Breaker (mpcs-op-circuit-breaker)
 
-[![GoDoc](https://godoc.org/github.com/sony/gobreaker?status.svg)](https://godoc.org/github.com/sony/gobreaker)
+## Description
 
-[gobreaker][repo-url] implements the [Circuit Breaker pattern](https://msdn.microsoft.com/en-us/library/dn589784.aspx) in Go.
+> **_v1.0.0:_** Offline Payments Circuit Breaker
 
-Installation
-------------
+## Installation
 
+`go get github.com/github.com/jorelcb/golang-circuit-breaker`
+
+By default, `go get` will bring in the latest tagged release version of the Library.
+
+```shell
+go get github.com/github.com/jorelcb/golang-circuit-breaker/v1.0.1
 ```
-go get github.com/sony/gobreaker/v2
+To get a specific release version of the Library use `@<tag>` in your `go get` command.
+
+```shell
+go get github.com/github.com/jorelcb/golang-circuit-breaker@1.1.0
 ```
 
-Usage
------
+To get the latest SDK repository change use `@latest`.
 
-The struct `CircuitBreaker` is a state machine to prevent sending requests that are likely to fail.
-The function `NewCircuitBreaker` creates a new `CircuitBreaker`.
-The type parameter `T` specifies the return type of requests.
+```shell
+go get github.com/github.com/jorelcb/golang-circuit-breaker@latest
+```
+
+## Getting started
+
+By default, you can use the library with the default configuration, which is:
 
 ```go
-func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T]
+    cb := circuitbreaker.NewCircuitBreaker()
 ```
 
-You can configure `CircuitBreaker` by the struct `Settings`:
+### Library configuration
+
+This library uses functional options to configure the circuit breaker:
 
 ```go
-type Settings struct {
-	Name          string
-	MaxRequests   uint32
-	Interval      time.Duration
-	Timeout       time.Duration
-	ReadyToTrip   func(counts Counts) bool
-	OnStateChange func(name string, from State, to State)
-	IsSuccessful  func(err error) bool
+    cb := circuitbreaker.NewCircuitBreaker(
+		circuitbreaker.WithName("my-circuit-breaker"),
+        circuitbreaker.WithMaxConsecutiveFailures(3),
+        circuitbreaker.WithInterval(time.Duration(10) * time.Second),
+		circuitbreaker.WithTimeout(time.Duration(60) * time.Second),
+		circuitbreaker.WithIsSuccessful(func(err error) bool {
+			return err == nil
+        }),
+        circuitbreaker.WithOnStateChange(func(state circuitbreaker.State) {
+            log.Printf("state changed to %s", state)
+        }),
+		circuitbreaker.WithReadyToTrip(func(counts circuitbreaker.Counts) bool {
+			return counts.ConsecutiveFailures > 3
+        })
+    )
+```
+
+## Usage
+
+Next example try by default to write a file, if it fails, it will write a log.
+Circuit breaker will be open if it fails 3 times consecutively, and will be closed after 10 seconds.
+
+
+```go
+var breaker *entities.CircuitBreaker
+breaker = NewCircuitBreaker()
+```
+
+Default options for circuit breaker are:
+
+```go
+Name:               "",
+MaxRequests:        1,
+Interval:           time.Duration(0) * time.Second,
+Timeout:            time.Duration(60) * time.Second,
+ReadyToTrip:        func (counts RequestsCounts) bool { return counts.ConsecutiveFailures > 5 },
+isSuccessful:       func (err error) bool { return err == nil },
+
+```
+### Config Options
+
+**Name** is the name of the CircuitBreaker.
+
+**MaxRequests** is the maximum number of requests allowed to pass through
+when the CircuitBreaker is half-open.
+If MaxRequests is 0, the CircuitBreaker allows only 1 request.
+
+**Interval** is the cyclic period of the closed current
+for the CircuitBreaker to Clear the internal Counts.
+If Interval is less than or equal to 0, the CircuitBreaker doesn't Clear internal Counts during the closed current.
+
+**Timeout** is the period of the open current,
+after which the current of the CircuitBreaker becomes half-open.
+If Timeout is less than or equal to 0, the timeout value of the CircuitBreaker is set to 60 seconds.
+
+**ReadyToTrip** is called with a copy of Counts whenever a request fails in the closed current.
+If ReadyToTrip returns true, the CircuitBreaker will be placed into the open current.
+If ReadyToTrip is nil, default ReadyToTrip is used.
+Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
+
+**OnStateChange** is called whenever the current of the CircuitBreaker changes.
+
+**IsSuccessful** is called with the error returned from a request.
+If IsSuccessful returns true, the error is counted as a success.
+Otherwise, the error is counted as a failure.
+If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
+
+```go
+func (a *App) circuit(ctx context.Context, message string) error {
+    // Configura el Circuit Breaker con una política predeterminada
+    
+    // Función wrapper para envolver la función writeToFile dentro del Circuit Breaker
+    writeWithCircuitBreaker := func(message string) error {
+        _, err := breaker.Execute(func() (interface{}, error) {
+            return nil, a.writeToFile(message)
+        })
+        return err
+    }
+
+    err := writeWithCircuitBreaker(message)
+    if err != nil {
+        // En caso de fallo, redirigir hacia la función writeToLog
+        err = a.writeToLog(message)
+        if err != nil {
+            a.l.Printf("Error al escribir en logger: %v\n", err.Error())
+        }
+    }
+    return err
+}
+
+func (a *App) writeToFile(message string) error {
+    // Implementa la lógica para escribir en Redis aquí
+    // ...
+    a.backend = "File"
+    err := a.write("./file_backend.txt", []byte(message))
+    if err != nil {
+        a.l.Printf("Error escribiendo en Archivo: %v\n", err.Error())
+        return err
+    }
+    a.l.Printf("Mensaje escrito en archivo exitosamente.")
+    return err
+}
+
+func (a *App) writeToLog(message string) error {
+    // Implementa la lógica para escribir en la base de datos aquí
+    a.backend = "Logger"
+    a.l.Printf("Mensaje escrito en backup logger exitosamente.")
+    return nil
+}
+
+func (a *App) write(name string, data []byte) error {
+    f, err := os.OpenFile(name, os.O_WRONLY|os.O_TRUNC, 644)
+    if err != nil {
+        return err
+    }
+    _, err = f.Write(data)
+    if err1 := f.Close(); err1 != nil && err == nil {
+        err = err1
+    }
+    return err
 }
 ```
 
-- `Name` is the name of the `CircuitBreaker`.
-
-- `MaxRequests` is the maximum number of requests allowed to pass through
-  when the `CircuitBreaker` is half-open.
-  If `MaxRequests` is 0, `CircuitBreaker` allows only 1 request.
-
-- `Interval` is the cyclic period of the closed state
-  for `CircuitBreaker` to clear the internal `Counts`, described later in this section.
-  If `Interval` is 0, `CircuitBreaker` doesn't clear the internal `Counts` during the closed state.
-
-- `Timeout` is the period of the open state,
-  after which the state of `CircuitBreaker` becomes half-open.
-  If `Timeout` is 0, the timeout value of `CircuitBreaker` is set to 60 seconds.
-
-- `ReadyToTrip` is called with a copy of `Counts` whenever a request fails in the closed state.
-  If `ReadyToTrip` returns true, `CircuitBreaker` will be placed into the open state.
-  If `ReadyToTrip` is `nil`, default `ReadyToTrip` is used.
-  Default `ReadyToTrip` returns true when the number of consecutive failures is more than 5.
-
-- `OnStateChange` is called whenever the state of `CircuitBreaker` changes.
-
-- `IsSuccessful` is called with the error returned from a request.
-  If `IsSuccessful` returns true, the error is counted as a success.
-  Otherwise the error is counted as a failure.
-  If `IsSuccessful` is nil, default `IsSuccessful` is used, which returns false for all non-nil errors.
-
-The struct `Counts` holds the numbers of requests and their successes/failures:
+Also You can initialize custom circuit breaker using functional options:
 
 ```go
-type Counts struct {
-	Requests             uint32
-	TotalSuccesses       uint32
-	TotalFailures        uint32
-	ConsecutiveSuccesses uint32
-	ConsecutiveFailures  uint32
-}
+    customReadyToTrip: func(counts RequestsCounts) bool {
+        numReqs := counts.Requests
+        failureRatio := float64(counts.TotalFailures) / float64(numReqs)
+        
+        counts.Clear() // no effect on circuit breaker counts
+        return numReqs >= 3 && failureRatio >= 0.6
+    }
+	
+    cb := circuitbreaker.NewCircuitBreaker(
+        circuitbreaker.WithMaxConsecutiveFailures(3),
+        circuitbreaker.WithOpenTimeout(10*time.Second),
+        circuitbreaker.WithHalfOpenTimeout(10*time.Second),
+        circuitbreaker.WithClosedTimeout(10*time.Second),
+        circuitbreaker.WithOnStateChange(func(state circuitbreaker.State) {
+            log.Printf("state changed to %s", state)
+        }),
+		circuitbreaker.WithReadyToTrip(customReadyToTrip)
+    )
 ```
 
-`CircuitBreaker` clears the internal `Counts` either
-on the change of the state or at the closed-state intervals.
-`Counts` ignores the results of the requests sent before clearing.
+### @TODO
+- Migrate tests to BDD
 
-`CircuitBreaker` can wrap any function to send a request:
+> **_NOTE:_** Add code snippets
 
-```go
-func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error)
-```
+***
 
-The method `Execute` runs the given request if `CircuitBreaker` accepts it.
-`Execute` returns an error instantly if `CircuitBreaker` rejects the request.
-Otherwise, `Execute` returns the result of the request.
-If a panic occurs in the request, `CircuitBreaker` handles it as an error
-and causes the same panic again.
+## Changelog
 
-Example
--------
+We keep changes to our codebase [here](CHANGELOG.md)
 
-```go
-var cb *gobreaker.CircuitBreaker[[]byte]
+## Library Versioning
 
-func Get(url string) ([]byte, error) {
-	body, err := cb.Execute(func() ([]byte, error) {
-		resp, err := http.Get(url)
-		if err != nil {
-			return nil, err
-		}
+Go modules works correctly if people follow [`Semver`](https://semver.org/). Please follow semver as good as possible to simplify the job of other developers when updating projects that depends on your library.
 
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
+When releasing a v2+ version, consider the requirements of `go.mod` and update your module name accordingly.
 
-		return body, nil
-	})
-	if err != nil {
-		return nil, err
-	}
+## Dependency Management
 
-	return body, nil
-}
-```
+The proposed method for managing dependencies is `go mod`.
 
-See [example](https://github.com/sony/gobreaker/blob/master/v2/example) for details.
+Even though `go mod` allows you to have several modules defined in the same repository we recommend you avoid doing it.
 
-License
--------
+The recommended pattern is to have a single `go.mod / go.sum` in the root folder of the repository, in which all packages dependencies are specified.
 
-The MIT License (MIT)
+### Links
 
-See [LICENSE](https://github.com/sony/gobreaker/blob/master/LICENSE) for details.
-
-
-[repo-url]: https://github.com/sony/gobreaker
+* This project is public forked and evolved from [Sony GoBreaker](https://github.com/sony/gobreaker).
+* [Using Go Modules](https://blog.golang.org/using-go-modules).
+* [Migrating to Go Modules](https://blog.golang.org/migrating-to-go-modules).

@@ -5,8 +5,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-
-	"github.com/sony/gobreaker"
 )
 
 var cb *gobreaker.CircuitBreaker
