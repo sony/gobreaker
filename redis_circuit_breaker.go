@@ -189,6 +189,13 @@ func (rcb *RedisCircuitBreaker) setState(state *RedisState, newState State, now 
 
 	rcb.toNewGeneration(state, now)
 
+	// Save the updated state to Redis
+	ctx := context.Background()
+	if err := rcb.setRedisState(ctx, *state); err != nil {
+		// Log the error, but continue with the current state
+		fmt.Printf("Failed to update state in Redis: %v\n", err)
+	}
+
 	if rcb.onStateChange != nil {
 		rcb.onStateChange(rcb.name, prev, newState)
 	}
