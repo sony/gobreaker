@@ -3,6 +3,7 @@ package gobreaker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -54,17 +55,17 @@ func (rcb *RedisCircuitBreaker) State() State {
 		return rcb.CircuitBreaker.State()
 	}
 
-	// now := time.Now()
-	// currentState, _ := rcb.currentState(state, now)
+	now := time.Now()
+	currentState, _ := rcb.currentState(state, now)
 
-	// // Update the state in Redis if it has changed
-	// if currentState != state.State {
-	// 	state.State = currentState
-	// 	if err := rcb.setRedisState(ctx, state); err != nil {
-	// 		// Log the error, but continue with the current state
-	// 		fmt.Printf("Failed to update state in Redis: %v\n", err)
-	// 	}
-	// }
+	// Update the state in Redis if it has changed
+	if currentState != state.State {
+		state.State = currentState
+		if err := rcb.setRedisState(ctx, state); err != nil {
+			// Log the error, but continue with the current state
+			fmt.Printf("Failed to update state in Redis: %v\n", err)
+		}
+	}
 
 	return state.State
 }
