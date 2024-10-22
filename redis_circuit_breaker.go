@@ -43,12 +43,11 @@ type RedisState struct {
 	Expiry     time.Time `json:"expiry"`
 }
 
-func (rcb *RedisCircuitBreaker) State() State {
+func (rcb *RedisCircuitBreaker) State(ctx context.Context) State {
 	if rcb.redisClient == nil {
 		return rcb.CircuitBreaker.State()
 	}
 
-	ctx := context.Background()
 	state, err := rcb.getRedisState(ctx)
 	if err != nil {
 		// Fallback to in-memory state if Redis fails
@@ -71,11 +70,11 @@ func (rcb *RedisCircuitBreaker) State() State {
 }
 
 // Execute runs the given request if the RedisCircuitBreaker accepts it
-func (rcb *RedisCircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error) {
+func (rcb *RedisCircuitBreaker) Execute(ctx context.Context, req func() (interface{}, error)) (interface{}, error) {
 	if rcb.redisClient == nil {
 		return rcb.CircuitBreaker.Execute(req)
 	}
-	generation, err := rcb.beforeRequest()
+	generation, err := rcb.beforeRequest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -83,19 +82,18 @@ func (rcb *RedisCircuitBreaker) Execute(req func() (interface{}, error)) (interf
 	defer func() {
 		e := recover()
 		if e != nil {
-			rcb.afterRequest(generation, false)
+			rcb.afterRequest(ctx, generation, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	rcb.afterRequest(generation, rcb.isSuccessful(err))
+	rcb.afterRequest(ctx, generation, rcb.isSuccessful(err))
 
 	return result, err
 }
 
-func (rcb *RedisCircuitBreaker) beforeRequest() (uint64, error) {
-	ctx := context.Background()
+func (rcb *RedisCircuitBreaker) beforeRequest(ctx context.Context) (uint64, error) {
 	state, err := rcb.getRedisState(ctx)
 	if err != nil {
 		return 0, err
@@ -126,8 +124,7 @@ func (rcb *RedisCircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (rcb *RedisCircuitBreaker) afterRequest(before uint64, success bool) {
-	ctx := context.Background()
+func (rcb *RedisCircuitBreaker) afterRequest(ctx context.Context, before uint64, success bool) {
 	state, err := rcb.getRedisState(ctx)
 	if err != nil {
 		return
