@@ -103,6 +103,14 @@ func (rcb *RedisCircuitBreaker) beforeRequest() (uint64, error) {
 	now := time.Now()
 	currentState, generation := rcb.currentState(state, now)
 
+	if currentState != state.State {
+		rcb.setState(&state, currentState, now)
+		err = rcb.setRedisState(ctx, state)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	if currentState == StateOpen {
 		return generation, ErrOpenState
 	} else if currentState == StateHalfOpen && state.Counts.Requests >= rcb.maxRequests {
