@@ -244,3 +244,69 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 		assert.Equal(t, StateClosed, customRCB.State())
 	})
 }
+
+func TestCustomRedisCircuitBreakerStateTransitions(t *testing.T) {
+	// Setup
+	var stateChange StateChange
+	customSt := Settings{
+		Name:        "cb",
+		MaxRequests: 3,
+		Interval:    5 * time.Second,
+		Timeout:     5 * time.Second,
+		ReadyToTrip: func(counts Counts) bool {
+			return counts.ConsecutiveFailures >= 2
+		},
+		OnStateChange: func(name string, from State, to State) {
+			stateChange = StateChange{name, from, to}
+		},
+	}
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("Failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+	})
+
+	cb := NewRedisCircuitBreaker(client, RedisSettings{Settings: customSt})
+
+	// Test case
+	t.Run("Circuit Breaker State Transitions", func(t *testing.T) {
+		// Initial state should be Closed
+		assert.Equal(t, StateClosed, cb.State())
+
+		// Cause two consecutive failures to trip the circuit
+		for i := 0; i < 2; i++ {
+			err := failRequest(cb)
+			assert.NoError(t, err, "Fail request should not return an error")
+		}
+
+		// Circuit should now be Open
+		assert.Equal(t, StateOpen, cb.State())
+		assert.Equal(t, StateChange{"cb", StateClosed, StateOpen}, stateChange)
+
+		// Requests should fail immediately when circuit is Open
+		err := successRequest(cb)
+		assert.Error(t, err)
+		assert.Equal(t, ErrOpenState, err)
+
+		// Simulate timeout to transition to Half-Open
+		pseudoSleepRedis(cb, 6*time.Second)
+		assert.Equal(t, StateHalfOpen, cb.State())
+		assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
+
+		// Successful requests in Half-Open state should close the circuit
+		for i := 0; i < int(cb.maxRequests); i++ {
+			err := successRequest(cb)
+			assert.NoError(t, err)
+		}
+
+		// Circuit should now be Closed
+		assert.Equal(t, StateClosed, cb.State())
+		assert.Equal(t, StateChange{"cb", StateHalfOpen, StateClosed}, stateChange)
+
+	})
+}
