@@ -3,7 +3,6 @@ package gobreaker
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -55,19 +54,19 @@ func (rcb *RedisCircuitBreaker) State() State {
 		return rcb.CircuitBreaker.State()
 	}
 
-	now := time.Now()
-	currentState, _ := rcb.currentState(state, now)
+	// now := time.Now()
+	// currentState, _ := rcb.currentState(state, now)
 
-	// Update the state in Redis if it has changed
-	if currentState != state.State {
-		state.State = currentState
-		if err := rcb.setRedisState(ctx, state); err != nil {
-			// Log the error, but continue with the current state
-			fmt.Printf("Failed to update state in Redis: %v\n", err)
-		}
-	}
+	// // Update the state in Redis if it has changed
+	// if currentState != state.State {
+	// 	state.State = currentState
+	// 	if err := rcb.setRedisState(ctx, state); err != nil {
+	// 		// Log the error, but continue with the current state
+	// 		fmt.Printf("Failed to update state in Redis: %v\n", err)
+	// 	}
+	// }
 
-	return currentState
+	return state.State
 }
 
 // Execute runs the given request if the RedisCircuitBreaker accepts it
@@ -75,7 +74,6 @@ func (rcb *RedisCircuitBreaker) Execute(req func() (interface{}, error)) (interf
 	if rcb.redisClient == nil {
 		return rcb.CircuitBreaker.Execute(req)
 	}
-
 	generation, err := rcb.beforeRequest()
 	if err != nil {
 		return nil, err
@@ -91,6 +89,7 @@ func (rcb *RedisCircuitBreaker) Execute(req func() (interface{}, error)) (interf
 
 	result, err := req()
 	rcb.afterRequest(generation, rcb.isSuccessful(err))
+
 	return result, err
 }
 
@@ -100,7 +99,6 @@ func (rcb *RedisCircuitBreaker) beforeRequest() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-
 	now := time.Now()
 	currentState, generation := rcb.currentState(state, now)
 
@@ -125,7 +123,6 @@ func (rcb *RedisCircuitBreaker) afterRequest(before uint64, success bool) {
 	if err != nil {
 		return
 	}
-
 	now := time.Now()
 	currentState, generation := rcb.currentState(state, now)
 	if generation != before {
@@ -142,6 +139,10 @@ func (rcb *RedisCircuitBreaker) afterRequest(before uint64, success bool) {
 }
 
 func (rcb *RedisCircuitBreaker) onSuccess(state *RedisState, currentState State, now time.Time) {
+	if state.State == StateOpen {
+		state.State = currentState
+	}
+
 	switch currentState {
 	case StateClosed:
 		state.Counts.onSuccess()
@@ -189,19 +190,13 @@ func (rcb *RedisCircuitBreaker) setState(state *RedisState, newState State, now 
 
 	rcb.toNewGeneration(state, now)
 
-	// Save the updated state to Redis
-	ctx := context.Background()
-	if err := rcb.setRedisState(ctx, *state); err != nil {
-		// Log the error, but continue with the current state
-		fmt.Printf("Failed to update state in Redis: %v\n", err)
-	}
-
 	if rcb.onStateChange != nil {
 		rcb.onStateChange(rcb.name, prev, newState)
 	}
 }
 
 func (rcb *RedisCircuitBreaker) toNewGeneration(state *RedisState, now time.Time) {
+
 	state.Generation++
 	state.Counts.clear()
 
