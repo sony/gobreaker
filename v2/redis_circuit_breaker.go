@@ -15,8 +15,8 @@ type CacheClient interface {
 }
 
 // RedisCircuitBreaker extends CircuitBreaker with Redis-based state storage
-type RedisCircuitBreaker struct {
-	*CircuitBreaker
+type RedisCircuitBreaker[T any] struct {
+	*CircuitBreaker[T]
 	redisClient CacheClient
 }
 
@@ -27,9 +27,9 @@ type RedisSettings struct {
 }
 
 // NewRedisCircuitBreaker returns a new RedisCircuitBreaker configured with the given RedisSettings
-func NewRedisCircuitBreaker(redisClient CacheClient, settings RedisSettings) *RedisCircuitBreaker {
-	cb := NewCircuitBreaker(settings.Settings)
-	return &RedisCircuitBreaker{
+func NewRedisCircuitBreaker[T any](redisClient CacheClient, settings RedisSettings) *RedisCircuitBreaker[T] {
+	cb := NewCircuitBreaker[T](settings.Settings)
+	return &RedisCircuitBreaker[T]{
 		CircuitBreaker: cb,
 		redisClient:    redisClient,
 	}
@@ -43,7 +43,7 @@ type RedisState struct {
 	Expiry     time.Time `json:"expiry"`
 }
 
-func (rcb *RedisCircuitBreaker) State(ctx context.Context) State {
+func (rcb *RedisCircuitBreaker[T]) State(ctx context.Context) State {
 	if rcb.redisClient == nil {
 		return rcb.CircuitBreaker.State()
 	}
@@ -70,13 +70,14 @@ func (rcb *RedisCircuitBreaker) State(ctx context.Context) State {
 }
 
 // Execute runs the given request if the RedisCircuitBreaker accepts it
-func (rcb *RedisCircuitBreaker) Execute(ctx context.Context, req func() (interface{}, error)) (interface{}, error) {
+func (rcb *RedisCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (T, error) {
 	if rcb.redisClient == nil {
 		return rcb.CircuitBreaker.Execute(req)
 	}
 	generation, err := rcb.beforeRequest(ctx)
 	if err != nil {
-		return nil, err
+		var zero T
+		return zero, err
 	}
 
 	defer func() {
@@ -93,7 +94,7 @@ func (rcb *RedisCircuitBreaker) Execute(ctx context.Context, req func() (interfa
 	return result, err
 }
 
-func (rcb *RedisCircuitBreaker) beforeRequest(ctx context.Context) (uint64, error) {
+func (rcb *RedisCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, error) {
 	state, err := rcb.getRedisState(ctx)
 	if err != nil {
 		return 0, err
@@ -124,7 +125,7 @@ func (rcb *RedisCircuitBreaker) beforeRequest(ctx context.Context) (uint64, erro
 	return generation, nil
 }
 
-func (rcb *RedisCircuitBreaker) afterRequest(ctx context.Context, before uint64, success bool) {
+func (rcb *RedisCircuitBreaker[T]) afterRequest(ctx context.Context, before uint64, success bool) {
 	state, err := rcb.getRedisState(ctx)
 	if err != nil {
 		return
@@ -144,7 +145,7 @@ func (rcb *RedisCircuitBreaker) afterRequest(ctx context.Context, before uint64,
 	rcb.setRedisState(ctx, state)
 }
 
-func (rcb *RedisCircuitBreaker) onSuccess(state *RedisState, currentState State, now time.Time) {
+func (rcb *RedisCircuitBreaker[T]) onSuccess(state *RedisState, currentState State, now time.Time) {
 	if state.State == StateOpen {
 		state.State = currentState
 	}
@@ -160,7 +161,7 @@ func (rcb *RedisCircuitBreaker) onSuccess(state *RedisState, currentState State,
 	}
 }
 
-func (rcb *RedisCircuitBreaker) onFailure(state *RedisState, currentState State, now time.Time) {
+func (rcb *RedisCircuitBreaker[T]) onFailure(state *RedisState, currentState State, now time.Time) {
 	switch currentState {
 	case StateClosed:
 		state.Counts.onFailure()
@@ -172,7 +173,7 @@ func (rcb *RedisCircuitBreaker) onFailure(state *RedisState, currentState State,
 	}
 }
 
-func (rcb *RedisCircuitBreaker) currentState(state RedisState, now time.Time) (State, uint64) {
+func (rcb *RedisCircuitBreaker[T]) currentState(state RedisState, now time.Time) (State, uint64) {
 	switch state.State {
 	case StateClosed:
 		if !state.Expiry.IsZero() && state.Expiry.Before(now) {
@@ -186,7 +187,7 @@ func (rcb *RedisCircuitBreaker) currentState(state RedisState, now time.Time) (S
 	return state.State, state.Generation
 }
 
-func (rcb *RedisCircuitBreaker) setState(state *RedisState, newState State, now time.Time) {
+func (rcb *RedisCircuitBreaker[T]) setState(state *RedisState, newState State, now time.Time) {
 	if state.State == newState {
 		return
 	}
@@ -201,7 +202,7 @@ func (rcb *RedisCircuitBreaker) setState(state *RedisState, newState State, now 
 	}
 }
 
-func (rcb *RedisCircuitBreaker) toNewGeneration(state *RedisState, now time.Time) {
+func (rcb *RedisCircuitBreaker[T]) toNewGeneration(state *RedisState, now time.Time) {
 
 	state.Generation++
 	state.Counts.clear()
@@ -221,11 +222,11 @@ func (rcb *RedisCircuitBreaker) toNewGeneration(state *RedisState, now time.Time
 	}
 }
 
-func (rcb *RedisCircuitBreaker) getRedisKey() string {
+func (rcb *RedisCircuitBreaker[T]) getRedisKey() string {
 	return "cb:" + rcb.name
 }
 
-func (rcb *RedisCircuitBreaker) getRedisState(ctx context.Context) (RedisState, error) {
+func (rcb *RedisCircuitBreaker[T]) getRedisState(ctx context.Context) (RedisState, error) {
 	var state RedisState
 	data, err := rcb.redisClient.Get(ctx, rcb.getRedisKey()).Bytes()
 	if err == redis.Nil {
@@ -239,7 +240,7 @@ func (rcb *RedisCircuitBreaker) getRedisState(ctx context.Context) (RedisState, 
 	return state, err
 }
 
-func (rcb *RedisCircuitBreaker) setRedisState(ctx context.Context, state RedisState) error {
+func (rcb *RedisCircuitBreaker[T]) setRedisState(ctx context.Context, state RedisState) error {
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err

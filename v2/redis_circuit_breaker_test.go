@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var defaultRCB *RedisCircuitBreaker
-var customRCB *RedisCircuitBreaker
+var defaultRCB *RedisCircuitBreaker[any]
+var customRCB *RedisCircuitBreaker[any]
 
-func setupTestWithMiniredis() (*RedisCircuitBreaker, *miniredis.Miniredis, *redis.Client) {
+func setupTestWithMiniredis() (*RedisCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		panic(err)
@@ -24,7 +24,7 @@ func setupTestWithMiniredis() (*RedisCircuitBreaker, *miniredis.Miniredis, *redi
 		Addr: mr.Addr(),
 	})
 
-	return NewRedisCircuitBreaker(client, RedisSettings{
+	return NewRedisCircuitBreaker[any](client, RedisSettings{
 		Settings: Settings{
 			Name:        "TestBreaker",
 			MaxRequests: 3,
@@ -37,7 +37,7 @@ func setupTestWithMiniredis() (*RedisCircuitBreaker, *miniredis.Miniredis, *redi
 	}), mr, client
 }
 
-func pseudoSleepRedis(ctx context.Context, rcb *RedisCircuitBreaker, period time.Duration) {
+func pseudoSleepRedis(ctx context.Context, rcb *RedisCircuitBreaker[any], period time.Duration) {
 	state, _ := rcb.getRedisState(ctx)
 
 	state.Expiry = state.Expiry.Add(-period)
@@ -48,12 +48,12 @@ func pseudoSleepRedis(ctx context.Context, rcb *RedisCircuitBreaker, period time
 	rcb.setRedisState(ctx, state)
 }
 
-func successRequest(ctx context.Context, rcb *RedisCircuitBreaker) error {
+func successRequest(ctx context.Context, rcb *RedisCircuitBreaker[any]) error {
 	_, err := rcb.Execute(ctx, func() (interface{}, error) { return nil, nil })
 	return err
 }
 
-func failRequest(ctx context.Context, rcb *RedisCircuitBreaker) error {
+func failRequest(ctx context.Context, rcb *RedisCircuitBreaker[any]) error {
 	_, err := rcb.Execute(ctx, func() (interface{}, error) { return nil, errors.New("fail") })
 	if err != nil && err.Error() == "fail" {
 		return nil
@@ -184,7 +184,7 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	customRCB = NewRedisCircuitBreaker(client, RedisSettings{
+	customRCB = NewRedisCircuitBreaker[any](client, RedisSettings{
 		Settings: Settings{
 			Name:        "CustomBreaker",
 			MaxRequests: 3,
@@ -278,7 +278,7 @@ func TestCustomRedisCircuitBreakerStateTransitions(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	cb := NewRedisCircuitBreaker(client, RedisSettings{Settings: customSt})
+	cb := NewRedisCircuitBreaker[any](client, RedisSettings{Settings: customSt})
 
 	ctx := context.Background()
 
