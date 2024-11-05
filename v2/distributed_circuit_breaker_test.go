@@ -11,10 +11,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var defaultRCB *RedisCircuitBreaker[any]
-var customRCB *RedisCircuitBreaker[any]
+var defaultRCB *DistributedCircuitBreaker[any]
+var customRCB *DistributedCircuitBreaker[any]
 
-func setupTestWithMiniredis() (*RedisCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
+type storageAdapter struct {
+	client *redis.Client
+}
+
+func (r *storageAdapter) Get(ctx context.Context, key string) ([]byte, error) {
+	return r.client.Get(ctx, key).Bytes()
+}
+
+func (r *storageAdapter) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	return r.client.Set(ctx, key, value, expiration).Err()
+}
+
+func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		panic(err)
@@ -24,7 +36,9 @@ func setupTestWithMiniredis() (*RedisCircuitBreaker[any], *miniredis.Miniredis, 
 		Addr: mr.Addr(),
 	})
 
-	return NewRedisCircuitBreaker[any](client, RedisSettings{
+	storageClient := &storageAdapter{client: client}
+
+	return NewDistributedCircuitBreaker[any](storageClient, StorageSettings{
 		Settings: Settings{
 			Name:        "TestBreaker",
 			MaxRequests: 3,
@@ -37,23 +51,23 @@ func setupTestWithMiniredis() (*RedisCircuitBreaker[any], *miniredis.Miniredis, 
 	}), mr, client
 }
 
-func pseudoSleepRedis(ctx context.Context, rcb *RedisCircuitBreaker[any], period time.Duration) {
-	state, _ := rcb.getRedisState(ctx)
+func pseudoSleepRedis(ctx context.Context, rcb *DistributedCircuitBreaker[any], period time.Duration) {
+	state, _ := rcb.getStoredState(ctx)
 
 	state.Expiry = state.Expiry.Add(-period)
 	// Reset counts if the interval has passed
 	if time.Now().After(state.Expiry) {
 		state.Counts = Counts{}
 	}
-	rcb.setRedisState(ctx, state)
+	rcb.setStoredState(ctx, state)
 }
 
-func successRequest(ctx context.Context, rcb *RedisCircuitBreaker[any]) error {
+func successRequest(ctx context.Context, rcb *DistributedCircuitBreaker[any]) error {
 	_, err := rcb.Execute(ctx, func() (interface{}, error) { return nil, nil })
 	return err
 }
 
-func failRequest(ctx context.Context, rcb *RedisCircuitBreaker[any]) error {
+func failRequest(ctx context.Context, rcb *DistributedCircuitBreaker[any]) error {
 	_, err := rcb.Execute(ctx, func() (interface{}, error) { return nil, errors.New("fail") })
 	if err != nil && err.Error() == "fail" {
 		return nil
@@ -146,11 +160,11 @@ func TestRedisCircuitBreakerCounts(t *testing.T) {
 		assert.Nil(t, successRequest(ctx, rcb))
 	}
 
-	state, _ := rcb.getRedisState(ctx)
+	state, _ := rcb.getStoredState(ctx)
 	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
 
 	assert.Nil(t, failRequest(ctx, rcb))
-	state, _ = rcb.getRedisState(ctx)
+	state, _ = rcb.getStoredState(ctx)
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
 }
 
@@ -163,7 +177,7 @@ func TestRedisCircuitBreakerFallback(t *testing.T) {
 	// Test when Redis is unavailable
 	mr.Close() // Simulate Redis being unavailable
 
-	rcb.redisClient = nil
+	rcb.cacheClient = nil
 
 	state := rcb.State(ctx)
 	assert.Equal(t, StateClosed, state, "Should fallback to in-memory state when Redis is unavailable")
@@ -184,7 +198,9 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	customRCB = NewRedisCircuitBreaker[any](client, RedisSettings{
+	storageClient := &storageAdapter{client: client}
+
+	customRCB = NewDistributedCircuitBreaker[any](storageClient, StorageSettings{
 		Settings: Settings{
 			Name:        "CustomBreaker",
 			MaxRequests: 3,
@@ -212,14 +228,14 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 			assert.NoError(t, failRequest(ctx, customRCB))
 		}
 
-		state, err := customRCB.getRedisState(ctx)
+		state, err := customRCB.getStoredState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, StateClosed, state.State)
 		assert.Equal(t, Counts{10, 5, 5, 0, 1}, state.Counts)
 
 		// Perform one more successful request
 		assert.NoError(t, successRequest(ctx, customRCB))
-		state, err = customRCB.getRedisState(ctx)
+		state, err = customRCB.getStoredState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
 
@@ -234,7 +250,7 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 		// Check if the circuit breaker is now open
 		assert.Equal(t, StateOpen, customRCB.State(ctx))
 
-		state, err = customRCB.getRedisState(ctx)
+		state, err = customRCB.getStoredState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{0, 0, 0, 0, 0}, state.Counts)
 	})
@@ -278,7 +294,9 @@ func TestCustomRedisCircuitBreakerStateTransitions(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	cb := NewRedisCircuitBreaker[any](client, RedisSettings{Settings: customSt})
+	storageClient := &storageAdapter{client: client}
+
+	cb := NewDistributedCircuitBreaker[any](storageClient, StorageSettings{Settings: customSt})
 
 	ctx := context.Background()
 

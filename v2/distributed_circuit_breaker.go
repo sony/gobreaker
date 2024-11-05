@@ -5,73 +5,70 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type CacheClient interface {
-	Get(ctx context.Context, key string) *redis.StringCmd
-	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+	Get(ctx context.Context, key string) ([]byte, error)
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
 }
 
-// RedisCircuitBreaker extends CircuitBreaker with Redis-based state storage
-type RedisCircuitBreaker[T any] struct {
+// DistributedCircuitBreaker extends CircuitBreaker with distributed state storage
+type DistributedCircuitBreaker[T any] struct {
 	*CircuitBreaker[T]
-	redisClient CacheClient
+	cacheClient CacheClient
 }
 
-// RedisSettings extends Settings with Redis configuration
-type RedisSettings struct {
+// StorageSettings extends Settings
+type StorageSettings struct {
 	Settings
-	RedisKey string
 }
 
-// NewRedisCircuitBreaker returns a new RedisCircuitBreaker configured with the given RedisSettings
-func NewRedisCircuitBreaker[T any](redisClient CacheClient, settings RedisSettings) *RedisCircuitBreaker[T] {
+// NewDistributedCircuitBreaker returns a new DistributedCircuitBreaker configured with the given StorageSettings
+func NewDistributedCircuitBreaker[T any](storageClient CacheClient, settings StorageSettings) *DistributedCircuitBreaker[T] {
 	cb := NewCircuitBreaker[T](settings.Settings)
-	return &RedisCircuitBreaker[T]{
+	return &DistributedCircuitBreaker[T]{
 		CircuitBreaker: cb,
-		redisClient:    redisClient,
+		cacheClient:    storageClient,
 	}
 }
 
-// RedisState represents the CircuitBreaker state stored in Redis
-type RedisState struct {
+// StoredState represents the CircuitBreaker state stored in Distributed Storage
+type StoredState struct {
 	State      State     `json:"state"`
 	Generation uint64    `json:"generation"`
 	Counts     Counts    `json:"counts"`
 	Expiry     time.Time `json:"expiry"`
 }
 
-func (rcb *RedisCircuitBreaker[T]) State(ctx context.Context) State {
-	if rcb.redisClient == nil {
+func (rcb *DistributedCircuitBreaker[T]) State(ctx context.Context) State {
+	if rcb.cacheClient == nil {
 		return rcb.CircuitBreaker.State()
 	}
 
-	state, err := rcb.getRedisState(ctx)
+	state, err := rcb.getStoredState(ctx)
 	if err != nil {
-		// Fallback to in-memory state if Redis fails
+		// Fallback to in-memory state if Storage fails
 		return rcb.CircuitBreaker.State()
 	}
 
 	now := time.Now()
 	currentState, _ := rcb.currentState(state, now)
 
-	// Update the state in Redis if it has changed
+	// Update the state in Storage if it has changed
 	if currentState != state.State {
 		state.State = currentState
-		if err := rcb.setRedisState(ctx, state); err != nil {
+		if err := rcb.setStoredState(ctx, state); err != nil {
 			// Log the error, but continue with the current state
-			fmt.Printf("Failed to update state in Redis: %v\n", err)
+			fmt.Printf("Failed to update state in storage: %v\n", err)
 		}
 	}
 
 	return state.State
 }
 
-// Execute runs the given request if the RedisCircuitBreaker accepts it
-func (rcb *RedisCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (T, error) {
-	if rcb.redisClient == nil {
+// Execute runs the given request if the DistributedCircuitBreaker accepts it
+func (rcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (T, error) {
+	if rcb.cacheClient == nil {
 		return rcb.CircuitBreaker.Execute(req)
 	}
 	generation, err := rcb.beforeRequest(ctx)
@@ -94,8 +91,8 @@ func (rcb *RedisCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, e
 	return result, err
 }
 
-func (rcb *RedisCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, error) {
-	state, err := rcb.getRedisState(ctx)
+func (rcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, error) {
+	state, err := rcb.getStoredState(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -104,7 +101,7 @@ func (rcb *RedisCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, e
 
 	if currentState != state.State {
 		rcb.setState(&state, currentState, now)
-		err = rcb.setRedisState(ctx, state)
+		err = rcb.setStoredState(ctx, state)
 		if err != nil {
 			return 0, err
 		}
@@ -117,7 +114,7 @@ func (rcb *RedisCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, e
 	}
 
 	state.Counts.onRequest()
-	err = rcb.setRedisState(ctx, state)
+	err = rcb.setStoredState(ctx, state)
 	if err != nil {
 		return 0, err
 	}
@@ -125,8 +122,8 @@ func (rcb *RedisCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, e
 	return generation, nil
 }
 
-func (rcb *RedisCircuitBreaker[T]) afterRequest(ctx context.Context, before uint64, success bool) {
-	state, err := rcb.getRedisState(ctx)
+func (rcb *DistributedCircuitBreaker[T]) afterRequest(ctx context.Context, before uint64, success bool) {
+	state, err := rcb.getStoredState(ctx)
 	if err != nil {
 		return
 	}
@@ -142,10 +139,10 @@ func (rcb *RedisCircuitBreaker[T]) afterRequest(ctx context.Context, before uint
 		rcb.onFailure(&state, currentState, now)
 	}
 
-	rcb.setRedisState(ctx, state)
+	rcb.setStoredState(ctx, state)
 }
 
-func (rcb *RedisCircuitBreaker[T]) onSuccess(state *RedisState, currentState State, now time.Time) {
+func (rcb *DistributedCircuitBreaker[T]) onSuccess(state *StoredState, currentState State, now time.Time) {
 	if state.State == StateOpen {
 		state.State = currentState
 	}
@@ -161,7 +158,7 @@ func (rcb *RedisCircuitBreaker[T]) onSuccess(state *RedisState, currentState Sta
 	}
 }
 
-func (rcb *RedisCircuitBreaker[T]) onFailure(state *RedisState, currentState State, now time.Time) {
+func (rcb *DistributedCircuitBreaker[T]) onFailure(state *StoredState, currentState State, now time.Time) {
 	switch currentState {
 	case StateClosed:
 		state.Counts.onFailure()
@@ -173,7 +170,7 @@ func (rcb *RedisCircuitBreaker[T]) onFailure(state *RedisState, currentState Sta
 	}
 }
 
-func (rcb *RedisCircuitBreaker[T]) currentState(state RedisState, now time.Time) (State, uint64) {
+func (rcb *DistributedCircuitBreaker[T]) currentState(state StoredState, now time.Time) (State, uint64) {
 	switch state.State {
 	case StateClosed:
 		if !state.Expiry.IsZero() && state.Expiry.Before(now) {
@@ -187,7 +184,7 @@ func (rcb *RedisCircuitBreaker[T]) currentState(state RedisState, now time.Time)
 	return state.State, state.Generation
 }
 
-func (rcb *RedisCircuitBreaker[T]) setState(state *RedisState, newState State, now time.Time) {
+func (rcb *DistributedCircuitBreaker[T]) setState(state *StoredState, newState State, now time.Time) {
 	if state.State == newState {
 		return
 	}
@@ -202,7 +199,7 @@ func (rcb *RedisCircuitBreaker[T]) setState(state *RedisState, newState State, n
 	}
 }
 
-func (rcb *RedisCircuitBreaker[T]) toNewGeneration(state *RedisState, now time.Time) {
+func (rcb *DistributedCircuitBreaker[T]) toNewGeneration(state *StoredState, now time.Time) {
 
 	state.Generation++
 	state.Counts.clear()
@@ -222,16 +219,16 @@ func (rcb *RedisCircuitBreaker[T]) toNewGeneration(state *RedisState, now time.T
 	}
 }
 
-func (rcb *RedisCircuitBreaker[T]) getRedisKey() string {
+func (rcb *DistributedCircuitBreaker[T]) getStorageKey() string {
 	return "cb:" + rcb.name
 }
 
-func (rcb *RedisCircuitBreaker[T]) getRedisState(ctx context.Context) (RedisState, error) {
-	var state RedisState
-	data, err := rcb.redisClient.Get(ctx, rcb.getRedisKey()).Bytes()
-	if err == redis.Nil {
+func (rcb *DistributedCircuitBreaker[T]) getStoredState(ctx context.Context) (StoredState, error) {
+	var state StoredState
+	data, err := rcb.cacheClient.Get(ctx, rcb.getStorageKey())
+	if len(data) == 0 {
 		// Key doesn't exist, return default state
-		return RedisState{State: StateClosed}, nil
+		return StoredState{State: StateClosed}, nil
 	} else if err != nil {
 		return state, err
 	}
@@ -240,11 +237,11 @@ func (rcb *RedisCircuitBreaker[T]) getRedisState(ctx context.Context) (RedisStat
 	return state, err
 }
 
-func (rcb *RedisCircuitBreaker[T]) setRedisState(ctx context.Context, state RedisState) error {
+func (rcb *DistributedCircuitBreaker[T]) setStoredState(ctx context.Context, state StoredState) error {
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 
-	return rcb.redisClient.Set(ctx, rcb.getRedisKey(), data, 0).Err()
+	return rcb.cacheClient.Set(ctx, rcb.getStorageKey(), data, 0)
 }
