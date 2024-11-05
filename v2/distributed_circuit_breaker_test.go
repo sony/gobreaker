@@ -51,7 +51,7 @@ func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Minir
 	}), mr, client
 }
 
-func pseudoSleepRedis(ctx context.Context, rcb *DistributedCircuitBreaker[any], period time.Duration) {
+func pseudoSleepStorage(ctx context.Context, rcb *DistributedCircuitBreaker[any], period time.Duration) {
 	state, _ := rcb.getStoredState(ctx)
 
 	state.Expiry = state.Expiry.Add(-period)
@@ -75,7 +75,7 @@ func failRequest(ctx context.Context, rcb *DistributedCircuitBreaker[any]) error
 	return err
 }
 
-func TestRedisCircuitBreakerInitialization(t *testing.T) {
+func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 	rcb, mr, _ := setupTestWithMiniredis()
 	defer mr.Close()
 
@@ -91,7 +91,7 @@ func TestRedisCircuitBreakerInitialization(t *testing.T) {
 	assert.Equal(t, StateClosed, state)
 }
 
-func TestRedisCircuitBreakerStateTransitions(t *testing.T) {
+func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	rcb, mr, _ := setupTestWithMiniredis()
 	defer mr.Close()
 
@@ -113,7 +113,7 @@ func TestRedisCircuitBreakerStateTransitions(t *testing.T) {
 	assert.Equal(t, ErrOpenState, err)
 
 	// Wait for timeout to transition to half-open
-	pseudoSleepRedis(ctx, rcb, rcb.timeout)
+	pseudoSleepStorage(ctx, rcb, rcb.timeout)
 	assert.Equal(t, StateHalfOpen, rcb.State(ctx))
 
 	// StateHalfOpen to StateClosed
@@ -129,7 +129,7 @@ func TestRedisCircuitBreakerStateTransitions(t *testing.T) {
 	assert.Equal(t, StateOpen, rcb.State(ctx))
 }
 
-func TestRedisCircuitBreakerExecution(t *testing.T) {
+func TestDistributedCircuitBreakerExecution(t *testing.T) {
 	rcb, mr, _ := setupTestWithMiniredis()
 	defer mr.Close()
 
@@ -150,7 +150,7 @@ func TestRedisCircuitBreakerExecution(t *testing.T) {
 	assert.Equal(t, "test error", err.Error())
 }
 
-func TestRedisCircuitBreakerCounts(t *testing.T) {
+func TestDistributedCircuitBreakerCounts(t *testing.T) {
 	rcb, mr, _ := setupTestWithMiniredis()
 	defer mr.Close()
 
@@ -168,26 +168,26 @@ func TestRedisCircuitBreakerCounts(t *testing.T) {
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
 }
 
-func TestRedisCircuitBreakerFallback(t *testing.T) {
+func TestDistributedCircuitBreakerFallback(t *testing.T) {
 	rcb, mr, _ := setupTestWithMiniredis()
 	defer mr.Close()
 
 	ctx := context.Background()
 
-	// Test when Redis is unavailable
-	mr.Close() // Simulate Redis being unavailable
+	// Test when Storage is unavailable
+	mr.Close() // Simulate Storage being unavailable
 
 	rcb.cacheClient = nil
 
 	state := rcb.State(ctx)
-	assert.Equal(t, StateClosed, state, "Should fallback to in-memory state when Redis is unavailable")
+	assert.Equal(t, StateClosed, state, "Should fallback to in-memory state when Storage is unavailable")
 
-	// Ensure operations still work without Redis
+	// Ensure operations still work without Storage
 	assert.Nil(t, successRequest(ctx, rcb))
 	assert.Nil(t, failRequest(ctx, rcb))
 }
 
-func TestCustomRedisCircuitBreaker(t *testing.T) {
+func TestCustomDistributedCircuitBreaker(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		panic(err)
@@ -240,7 +240,7 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
 
 		// Simulate time passing to reset counts
-		pseudoSleepRedis(ctx, customRCB, time.Second*30)
+		pseudoSleepStorage(ctx, customRCB, time.Second*30)
 
 		// Perform requests to trigger StateOpen
 		assert.NoError(t, successRequest(ctx, customRCB))
@@ -257,7 +257,7 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 
 	t.Run("Timeout and Half-Open State", func(t *testing.T) {
 		// Simulate timeout to transition to half-open state
-		pseudoSleepRedis(ctx, customRCB, time.Second*90)
+		pseudoSleepStorage(ctx, customRCB, time.Second*90)
 		assert.Equal(t, StateHalfOpen, customRCB.State(ctx))
 
 		// Successful requests in half-open state should close the circuit
@@ -268,7 +268,7 @@ func TestCustomRedisCircuitBreaker(t *testing.T) {
 	})
 }
 
-func TestCustomRedisCircuitBreakerStateTransitions(t *testing.T) {
+func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	// Setup
 	var stateChange StateChange
 	customSt := Settings{
@@ -321,7 +321,7 @@ func TestCustomRedisCircuitBreakerStateTransitions(t *testing.T) {
 		assert.Equal(t, ErrOpenState, err)
 
 		// Simulate timeout to transition to Half-Open
-		pseudoSleepRedis(ctx, cb, 6*time.Second)
+		pseudoSleepStorage(ctx, cb, 6*time.Second)
 		assert.Equal(t, StateHalfOpen, cb.State(ctx))
 		assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
 
