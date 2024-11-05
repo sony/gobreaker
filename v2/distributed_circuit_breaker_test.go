@@ -18,11 +18,11 @@ type storageAdapter struct {
 	client *redis.Client
 }
 
-func (r *storageAdapter) Get(ctx context.Context, key string) ([]byte, error) {
+func (r *storageAdapter) GetState(ctx context.Context, key string) ([]byte, error) {
 	return r.client.Get(ctx, key).Bytes()
 }
 
-func (r *storageAdapter) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+func (r *storageAdapter) SetState(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
 	return r.client.Set(ctx, key, value, expiration).Err()
 }
 

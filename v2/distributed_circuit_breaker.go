@@ -8,8 +8,8 @@ import (
 )
 
 type CacheClient interface {
-	Get(ctx context.Context, key string) ([]byte, error)
-	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	GetState(ctx context.Context, key string) ([]byte, error)
+	SetState(ctx context.Context, key string, value interface{}, expiration time.Duration) error
 }
 
 // DistributedCircuitBreaker extends CircuitBreaker with distributed state storage
@@ -225,7 +225,7 @@ func (rcb *DistributedCircuitBreaker[T]) getStorageKey() string {
 
 func (rcb *DistributedCircuitBreaker[T]) getStoredState(ctx context.Context) (StoredState, error) {
 	var state StoredState
-	data, err := rcb.cacheClient.Get(ctx, rcb.getStorageKey())
+	data, err := rcb.cacheClient.GetState(ctx, rcb.getStorageKey())
 	if len(data) == 0 {
 		// Key doesn't exist, return default state
 		return StoredState{State: StateClosed}, nil
@@ -243,5 +243,5 @@ func (rcb *DistributedCircuitBreaker[T]) setStoredState(ctx context.Context, sta
 		return err
 	}
 
-	return rcb.cacheClient.Set(ctx, rcb.getStorageKey(), data, 0)
+	return rcb.cacheClient.SetState(ctx, rcb.getStorageKey(), data, 0)
 }
