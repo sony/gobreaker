@@ -2,14 +2,21 @@ package gobreaker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 )
 
+// SharedState represents the CircuitBreaker state stored in Distributed Storage
+type SharedState struct {
+	State      State     `json:"state"`
+	Generation uint64    `json:"generation"`
+	Counts     Counts    `json:"counts"`
+	Expiry     time.Time `json:"expiry"`
+}
+
 type SharedStateStore interface {
-	GetState(ctx context.Context, key string) ([]byte, error)
-	SetState(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	GetState(ctx context.Context) (SharedState, error)
+	SetState(ctx context.Context, state SharedState) error
 }
 
 // DistributedCircuitBreaker extends CircuitBreaker with distributed state storage
@@ -27,20 +34,12 @@ func NewDistributedCircuitBreaker[T any](storageClient SharedStateStore, setting
 	}
 }
 
-// SharedState represents the CircuitBreaker state stored in Distributed Storage
-type SharedState struct {
-	State      State     `json:"state"`
-	Generation uint64    `json:"generation"`
-	Counts     Counts    `json:"counts"`
-	Expiry     time.Time `json:"expiry"`
-}
-
 func (rcb *DistributedCircuitBreaker[T]) State(ctx context.Context) State {
 	if rcb.cacheClient == nil {
 		return rcb.CircuitBreaker.State()
 	}
 
-	state, err := rcb.getStoredState(ctx)
+	state, err := rcb.cacheClient.GetState(ctx)
 	if err != nil {
 		// Fallback to in-memory state if Storage fails
 		return rcb.CircuitBreaker.State()
@@ -52,7 +51,7 @@ func (rcb *DistributedCircuitBreaker[T]) State(ctx context.Context) State {
 	// Update the state in Storage if it has changed
 	if currentState != state.State {
 		state.State = currentState
-		if err := rcb.setStoredState(ctx, state); err != nil {
+		if err := rcb.cacheClient.SetState(ctx, state); err != nil {
 			// Log the error, but continue with the current state
 			fmt.Printf("Failed to update state in storage: %v\n", err)
 		}
@@ -87,7 +86,7 @@ func (rcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func()
 }
 
 func (rcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, error) {
-	state, err := rcb.getStoredState(ctx)
+	state, err := rcb.cacheClient.GetState(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -96,7 +95,7 @@ func (rcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uin
 
 	if currentState != state.State {
 		rcb.setState(&state, currentState, now)
-		err = rcb.setStoredState(ctx, state)
+		err = rcb.cacheClient.SetState(ctx, state)
 		if err != nil {
 			return 0, err
 		}
@@ -109,7 +108,7 @@ func (rcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uin
 	}
 
 	state.Counts.onRequest()
-	err = rcb.setStoredState(ctx, state)
+	err = rcb.cacheClient.SetState(ctx, state)
 	if err != nil {
 		return 0, err
 	}
@@ -118,7 +117,7 @@ func (rcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uin
 }
 
 func (rcb *DistributedCircuitBreaker[T]) afterRequest(ctx context.Context, before uint64, success bool) {
-	state, err := rcb.getStoredState(ctx)
+	state, err := rcb.cacheClient.GetState(ctx)
 	if err != nil {
 		return
 	}
@@ -134,7 +133,7 @@ func (rcb *DistributedCircuitBreaker[T]) afterRequest(ctx context.Context, befor
 		rcb.onFailure(&state, currentState, now)
 	}
 
-	rcb.setStoredState(ctx, state)
+	rcb.cacheClient.SetState(ctx, state)
 }
 
 func (rcb *DistributedCircuitBreaker[T]) onSuccess(state *SharedState, currentState State, now time.Time) {
@@ -212,31 +211,4 @@ func (rcb *DistributedCircuitBreaker[T]) toNewGeneration(state *SharedState, now
 	default: // StateHalfOpen
 		state.Expiry = zero
 	}
-}
-
-func (rcb *DistributedCircuitBreaker[T]) getStorageKey() string {
-	return "cb:" + rcb.name
-}
-
-func (rcb *DistributedCircuitBreaker[T]) getStoredState(ctx context.Context) (SharedState, error) {
-	var state SharedState
-	data, err := rcb.cacheClient.GetState(ctx, rcb.getStorageKey())
-	if len(data) == 0 {
-		// Key doesn't exist, return default state
-		return SharedState{State: StateClosed}, nil
-	} else if err != nil {
-		return state, err
-	}
-
-	err = json.Unmarshal(data, &state)
-	return state, err
-}
-
-func (rcb *DistributedCircuitBreaker[T]) setStoredState(ctx context.Context, state SharedState) error {
-	data, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-
-	return rcb.cacheClient.SetState(ctx, rcb.getStorageKey(), data, 0)
 }
