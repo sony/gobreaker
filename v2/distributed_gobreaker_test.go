@@ -66,14 +66,14 @@ func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Minir
 }
 
 func pseudoSleepStorage(ctx context.Context, rcb *DistributedCircuitBreaker[any], period time.Duration) {
-	state, _ := rcb.cacheClient.GetState(ctx)
+	state, _ := rcb.store.GetState(ctx)
 
 	state.Expiry = state.Expiry.Add(-period)
 	// Reset counts if the interval has passed
 	if time.Now().After(state.Expiry) {
 		state.Counts = Counts{}
 	}
-	rcb.cacheClient.SetState(ctx, state)
+	rcb.store.SetState(ctx, state)
 }
 
 func successRequest(ctx context.Context, rcb *DistributedCircuitBreaker[any]) error {
@@ -174,11 +174,11 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 		assert.Nil(t, successRequest(ctx, rcb))
 	}
 
-	state, _ := rcb.cacheClient.GetState(ctx)
+	state, _ := rcb.store.GetState(ctx)
 	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
 
 	assert.Nil(t, failRequest(ctx, rcb))
-	state, _ = rcb.cacheClient.GetState(ctx)
+	state, _ = rcb.store.GetState(ctx)
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
 }
 
@@ -191,7 +191,7 @@ func TestDistributedCircuitBreakerFallback(t *testing.T) {
 	// Test when Storage is unavailable
 	mr.Close() // Simulate Storage being unavailable
 
-	rcb.cacheClient = nil
+	rcb.store = nil
 
 	state := rcb.State(ctx)
 	assert.Equal(t, StateClosed, state, "Should fallback to in-memory state when Storage is unavailable")
@@ -240,14 +240,14 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 			assert.NoError(t, failRequest(ctx, customRCB))
 		}
 
-		state, err := customRCB.cacheClient.GetState(ctx)
+		state, err := customRCB.store.GetState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, StateClosed, state.State)
 		assert.Equal(t, Counts{10, 5, 5, 0, 1}, state.Counts)
 
 		// Perform one more successful request
 		assert.NoError(t, successRequest(ctx, customRCB))
-		state, err = customRCB.cacheClient.GetState(ctx)
+		state, err = customRCB.store.GetState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
 
@@ -262,7 +262,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		// Check if the circuit breaker is now open
 		assert.Equal(t, StateOpen, customRCB.State(ctx))
 
-		state, err = customRCB.cacheClient.GetState(ctx)
+		state, err = customRCB.store.GetState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{0, 0, 0, 0, 0}, state.Counts)
 	})
