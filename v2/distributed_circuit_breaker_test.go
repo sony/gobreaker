@@ -38,15 +38,13 @@ func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Minir
 
 	storageClient := &storageAdapter{client: client}
 
-	return NewDistributedCircuitBreaker[any](storageClient, StorageSettings{
-		Settings: Settings{
-			Name:        "TestBreaker",
-			MaxRequests: 3,
-			Interval:    time.Second,
-			Timeout:     time.Second * 2,
-			ReadyToTrip: func(counts Counts) bool {
-				return counts.ConsecutiveFailures > 5
-			},
+	return NewDistributedCircuitBreaker[any](storageClient, Settings{
+		Name:        "TestBreaker",
+		MaxRequests: 3,
+		Interval:    time.Second,
+		Timeout:     time.Second * 2,
+		ReadyToTrip: func(counts Counts) bool {
+			return counts.ConsecutiveFailures > 5
 		},
 	}), mr, client
 }
@@ -200,17 +198,15 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 
 	storageClient := &storageAdapter{client: client}
 
-	customRCB = NewDistributedCircuitBreaker[any](storageClient, StorageSettings{
-		Settings: Settings{
-			Name:        "CustomBreaker",
-			MaxRequests: 3,
-			Interval:    time.Second * 30,
-			Timeout:     time.Second * 90,
-			ReadyToTrip: func(counts Counts) bool {
-				numReqs := counts.Requests
-				failureRatio := float64(counts.TotalFailures) / float64(numReqs)
-				return numReqs >= 3 && failureRatio >= 0.6
-			},
+	customRCB = NewDistributedCircuitBreaker[any](storageClient, Settings{
+		Name:        "CustomBreaker",
+		MaxRequests: 3,
+		Interval:    time.Second * 30,
+		Timeout:     time.Second * 90,
+		ReadyToTrip: func(counts Counts) bool {
+			numReqs := counts.Requests
+			failureRatio := float64(counts.TotalFailures) / float64(numReqs)
+			return numReqs >= 3 && failureRatio >= 0.6
 		},
 	})
 
@@ -296,7 +292,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 
 	storageClient := &storageAdapter{client: client}
 
-	cb := NewDistributedCircuitBreaker[any](storageClient, StorageSettings{Settings: customSt})
+	cb := NewDistributedCircuitBreaker[any](storageClient, customSt)
 
 	ctx := context.Background()
 
