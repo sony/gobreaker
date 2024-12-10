@@ -111,6 +111,7 @@ type Settings struct {
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
+	ReadyToOpen   func(counts Counts) bool
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
@@ -122,6 +123,7 @@ type CircuitBreaker[T any] struct {
 	readyToTrip   func(counts Counts) bool
 	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
+	readyToOpen   func(counts Counts) bool
 
 	mutex      sync.Mutex
 	state      State
@@ -174,6 +176,12 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.isSuccessful = st.IsSuccessful
 	}
 
+	if st.ReadyToOpen == nil {
+		cb.readyToOpen = defaultReadyToOpen
+	} else {
+		cb.readyToOpen = st.ReadyToOpen
+	}
+
 	cb.toNewGeneration(time.Now())
 
 	return cb
@@ -195,6 +203,10 @@ func defaultReadyToTrip(counts Counts) bool {
 
 func defaultIsSuccessful(err error) bool {
 	return err == nil
+}
+
+func defaultReadyToOpen(counts Counts) bool {
+	return counts.Requests > 0
 }
 
 // Name returns the name of the CircuitBreaker.
@@ -328,7 +340,9 @@ func (cb *CircuitBreaker[T]) onFailure(state State, now time.Time) {
 			cb.setState(StateOpen, now)
 		}
 	case StateHalfOpen:
-		cb.setState(StateOpen, now)
+		if cb.readyToOpen(cb.counts) {
+			cb.setState(StateOpen, now)
+		}
 	}
 }
 
