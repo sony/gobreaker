@@ -215,7 +215,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 			return numReqs >= 3 && failureRatio >= 0.6
 		},
 	})
-	assert.NoError(err)
+	assert.NoError(t, err)
 
 	t.Run("Initialization", func(t *testing.T) {
 		assert.Equal(t, "CustomBreaker", customDCB.Name())
