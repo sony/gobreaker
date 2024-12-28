@@ -78,7 +78,7 @@ func failRequest(ctx context.Context, dcb *DistributedCircuitBreaker[any]) error
 	return err
 }
 
-func assertState(ctx context.Context, t *testing, dcb *DistributedCircuitBreaker[any], expected State) {
+func assertState(ctx context.Context, t *testing.T, dcb *DistributedCircuitBreaker[any], expected State) {
 	state, err := dcb.State(ctx)
 	assert.Equal(t, expected, state)
 	assert.NoError(t, err)
@@ -204,7 +204,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 
 	store := &storeAdapter{client: client}
 
-	customDCB = NewDistributedCircuitBreaker[any](ctx, store, Settings{
+	customDCB, err = NewDistributedCircuitBreaker[any](ctx, store, Settings{
 		Name:        "CustomBreaker",
 		MaxRequests: 3,
 		Interval:    time.Second * 30,
@@ -215,6 +215,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 			return numReqs >= 3 && failureRatio >= 0.6
 		},
 	})
+	assert.NoError(err)
 
 	t.Run("Initialization", func(t *testing.T) {
 		assert.Equal(t, "CustomBreaker", customDCB.Name())
@@ -298,7 +299,8 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 
 	store := &storeAdapter{client: client}
 
-	dcb := NewDistributedCircuitBreaker[any](ctx, store, customSt)
+	dcb, err := NewDistributedCircuitBreaker[any](ctx, store, customSt)
+	assert.NoError(t, err)
 
 	// Test case
 	t.Run("Circuit Breaker State Transitions", func(t *testing.T) {
