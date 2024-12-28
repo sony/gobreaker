@@ -44,7 +44,13 @@ func NewDistributedCircuitBreaker[T any](ctx context.Context, store SharedDataSt
 		CircuitBreaker: NewCircuitBreaker[T](settings),
 		store:          store,
 	}
-	err := dcb.setSharedState(ctx, dcb.state)
+	state := SharedState{
+		State:      dcb.state,
+		Generation: dcb.generation,
+		Counts:     dcb.counts,
+		Expiry:     dcb.expiry,
+	}
+	err := dcb.setSharedState(ctx, state)
 	return dcb, err
 }
 
