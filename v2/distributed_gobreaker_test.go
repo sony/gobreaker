@@ -14,19 +14,19 @@ import (
 var defaultDCB *DistributedCircuitBreaker[any]
 var customDCB *DistributedCircuitBreaker[any]
 
-type storageAdapter struct {
+type storeAdapter struct {
 	client *redis.Client
 }
 
-func (r *storageAdapter) GetData(ctx context.Context, key string) ([]byte, error) {
+func (r *storeAdapter) GetData(ctx context.Context, key string) ([]byte, error) {
 	return r.client.Get(ctx, key).Bytes()
 }
 
-func (r *storageAdapter) SetData(ctx context.Context, key string, value []byte) error {
+func (r *storeAdapter) SetData(ctx context.Context, key string, value []byte) error {
 	return r.client.Set(ctx, key, value, 0).Err()
 }
 
-func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
+func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		panic(err)
@@ -36,9 +36,9 @@ func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Minir
 		Addr: mr.Addr(),
 	})
 
-	storageClient := &storageAdapter{client: client}
+	store := &storeAdapter{client: client}
 
-	return NewDistributedCircuitBreaker[any](storageClient, Settings{
+	return NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "TestBreaker",
 		MaxRequests: 3,
 		Interval:    time.Second,
@@ -50,14 +50,14 @@ func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Minir
 }
 
 func pseudoSleepStorage(ctx context.Context, dcb *DistributedCircuitBreaker[any], period time.Duration) {
-	state, _ := dcb.getStoredState(ctx)
+	state, _ := dcb.getSharedState(ctx)
 
 	state.Expiry = state.Expiry.Add(-period)
 	// Reset counts if the interval has passed
 	if time.Now().After(state.Expiry) {
 		state.Counts = Counts{}
 	}
-	dcb.setStoredState(ctx, state)
+	dcb.setSharedState(ctx, state)
 }
 
 func successRequest(ctx context.Context, dcb *DistributedCircuitBreaker[any]) error {
@@ -74,10 +74,9 @@ func failRequest(ctx context.Context, dcb *DistributedCircuitBreaker[any]) error
 }
 
 func TestDistributedCircuitBreakerInitialization(t *testing.T) {
-	dcb, mr, _ := setupTestWithMiniredis()
-	defer mr.Close()
-
 	ctx := context.Background()
+	dcb, mr, _ := setupTestWithMiniredis(ctx)
+	defer mr.Close()
 
 	assert.Equal(t, "TestBreaker", dcb.Name())
 	assert.Equal(t, uint32(3), dcb.maxRequests)
@@ -90,10 +89,9 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 }
 
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
-	dcb, mr, _ := setupTestWithMiniredis()
-	defer mr.Close()
-
 	ctx := context.Background()
+	dcb, mr, _ := setupTestWithMiniredis(ctx)
+	defer mr.Close()
 
 	// Check if initial state is closed
 	assert.Equal(t, StateClosed, dcb.State(ctx))
@@ -128,10 +126,9 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 }
 
 func TestDistributedCircuitBreakerExecution(t *testing.T) {
-	dcb, mr, _ := setupTestWithMiniredis()
-	defer mr.Close()
-
 	ctx := context.Background()
+	dcb, mr, _ := setupTestWithMiniredis(ctx)
+	defer mr.Close()
 
 	// Test successful execution
 	result, err := dcb.Execute(ctx, func() (interface{}, error) {
@@ -149,28 +146,26 @@ func TestDistributedCircuitBreakerExecution(t *testing.T) {
 }
 
 func TestDistributedCircuitBreakerCounts(t *testing.T) {
-	dcb, mr, _ := setupTestWithMiniredis()
-	defer mr.Close()
-
 	ctx := context.Background()
+	dcb, mr, _ := setupTestWithMiniredis(ctx)
+	defer mr.Close()
 
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, successRequest(ctx, dcb))
 	}
 
-	state, _ := dcb.getStoredState(ctx)
+	state, _ := dcb.getSharedState(ctx)
 	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
 
 	assert.Nil(t, failRequest(ctx, dcb))
-	state, _ = dcb.getStoredState(ctx)
+	state, _ = dcb.getSharedState(ctx)
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
 }
 
 func TestDistributedCircuitBreakerFallback(t *testing.T) {
-	dcb, mr, _ := setupTestWithMiniredis()
-	defer mr.Close()
-
 	ctx := context.Background()
+	dcb, mr, _ := setupTestWithMiniredis(ctx)
+	defer mr.Close()
 
 	// Test when Storage is unavailable
 	mr.Close() // Simulate Storage being unavailable
@@ -192,13 +187,15 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 	}
 	defer mr.Close()
 
+	ctx := context.Background()
+	
 	client := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
 
-	storageClient := &storageAdapter{client: client}
+	store := &storeAdapter{client: client}
 
-	customDCB = NewDistributedCircuitBreaker[any](storageClient, Settings{
+	customDCB = NewDistributedCircuitBreaker[any](ctx, store, Settings{
 		Name:        "CustomBreaker",
 		MaxRequests: 3,
 		Interval:    time.Second * 30,
@@ -209,8 +206,6 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 			return numReqs >= 3 && failureRatio >= 0.6
 		},
 	})
-
-	ctx := context.Background()
 
 	t.Run("Initialization", func(t *testing.T) {
 		assert.Equal(t, "CustomBreaker", customDCB.Name())
@@ -224,14 +219,14 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 			assert.NoError(t, failRequest(ctx, customDCB))
 		}
 
-		state, err := customDCB.getStoredState(ctx)
+		state, err := customDCB.getSharedState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, StateClosed, state.State)
 		assert.Equal(t, Counts{10, 5, 5, 0, 1}, state.Counts)
 
 		// Perform one more successful request
 		assert.NoError(t, successRequest(ctx, customDCB))
-		state, err = customDCB.getStoredState(ctx)
+		state, err = customDCB.getSharedState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
 
@@ -246,7 +241,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		// Check if the circuit breaker is now open
 		assert.Equal(t, StateOpen, customDCB.State(ctx))
 
-		state, err = customDCB.getStoredState(ctx)
+		state, err = customDCB.getSharedState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{0, 0, 0, 0, 0}, state.Counts)
 	})
@@ -286,15 +281,15 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	}
 	defer mr.Close()
 
+	ctx := context.Background()
+	
 	client := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
 
-	storageClient := &storageAdapter{client: client}
+	store := &storeAdapter{client: client}
 
-	dcb := NewDistributedCircuitBreaker[any](storageClient, customSt)
-
-	ctx := context.Background()
+	dcb := NewDistributedCircuitBreaker[any](ctx, store, customSt)
 
 	// Test case
 	t.Run("Circuit Breaker State Transitions", func(t *testing.T) {
