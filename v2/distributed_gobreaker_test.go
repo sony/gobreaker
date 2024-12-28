@@ -26,7 +26,7 @@ func (r *storeAdapter) SetData(ctx context.Context, key string, value []byte) er
 var redisServer *miniredis.Miniredis
 
 func setUpDCB(ctx context.Context) *DistributedCircuitBreaker[any] {
-	var err error 
+	var err error
 	redisServer, err := miniredis.Run()
 	if err != nil {
 		panic(err)
