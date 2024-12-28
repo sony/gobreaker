@@ -3,7 +3,7 @@ package gobreaker
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"time"
 )
 
@@ -44,7 +44,7 @@ func NewDistributedCircuitBreaker[T any](ctx context.Context, store SharedDataSt
 		CircuitBreaker: NewCircuitBreaker[T](settings),
 		store:          store,
 	}
-	err := dcb.setSharedState(ctx, cb.state)
+	err := dcb.setSharedState(ctx, dcb.state)
 	return dcb, err
 }
 
@@ -104,7 +104,7 @@ func (dcb *DistributedCircuitBreaker[T]) State(ctx context.Context) (State, erro
 }
 
 // Execute runs the given request if the DistributedCircuitBreaker accepts it.
-func (dcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (T, err error) {
+func (dcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (t T, err error) {
 	generation, err := dcb.beforeRequest(ctx)
 	if err != nil {
 		var defaultValue T
