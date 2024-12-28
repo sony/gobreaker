@@ -56,8 +56,9 @@ func setUpDCB(ctx context.Context) *DistributedCircuitBreaker[any] {
 
 func tearDownDCB(dcb *DistributedCircuitBreaker[any]) {
 	if dcb != nil {
-		dcb.store.client.Close()
-		dcb.store.client = nil
+		store := dcb.store.(*storeAdapter)
+		store.client.Close()
+		store.client = nil
 	}
 
 	if redisServer != nil {
@@ -183,12 +184,12 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 
 	state, err := dcb.getSharedState(ctx)
 	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
-	assert.NoError(err)
+	assert.NoError(t, err)
 
 	assert.Nil(t, failRequest(ctx, dcb))
 	state, err = dcb.getSharedState(ctx)
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
-	assert.NoError(err)
+	assert.NoError(t, err)
 }
 
 var customDCB *DistributedCircuitBreaker[any]
