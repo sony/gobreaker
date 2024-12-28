@@ -78,7 +78,7 @@ func failRequest(ctx context.Context, dcb *DistributedCircuitBreaker[any]) error
 	return err
 }
 
-func assertState(ctx context.Context, t *testing, dcb *Distri*DistributedCircuitBreaker[any], expected State) {
+func assertState(ctx context.Context, t *testing, dcb *DistributedCircuitBreaker[any], expected State) {
 	state, err := dcb.State(ctx)
 	assert.Equal(t, expected, state)
 	assert.NoError(t, err)
