@@ -13,6 +13,8 @@ jobs:
         # working-directory: ${{matrix.work-dir}}
         working-directory: ./v2
     steps:
+    - name: pwd
+      run: pwd
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
