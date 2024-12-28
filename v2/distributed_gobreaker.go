@@ -126,7 +126,7 @@ func (dcb *DistributedCircuitBreaker[T]) State(ctx context.Context) (State, erro
 	}
 
 	dcb.inject(shared)
-	state := dcb.State()
+	state := dcb.CircuitBreaker.State()
 	shared = dcb.extract()
 
 	err = dcb.setSharedState(ctx, shared)
