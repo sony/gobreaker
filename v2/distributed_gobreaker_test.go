@@ -2,7 +2,6 @@ package gobreaker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -19,27 +18,12 @@ type storageAdapter struct {
 	client *redis.Client
 }
 
-func (r *storageAdapter) GetState(ctx context.Context) (SharedState, error) {
-	var state SharedState
-	data, err := r.client.Get(ctx, "gobreaker").Bytes()
-	if len(data) == 0 {
-		// Key doesn't exist, return default state
-		return SharedState{State: StateClosed}, nil
-	} else if err != nil {
-		return state, err
-	}
-
-	err = json.Unmarshal(data, &state)
-	return state, err
+func (r *storageAdapter) GetData(ctx context.Context, key string) ([]byte, error) {
+	return r.client.Get(ctx, key).Bytes()
 }
 
-func (r *storageAdapter) SetState(ctx context.Context, state SharedState) error {
-	data, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-
-	return r.client.Set(ctx, "gobreaker", data, 0).Err()
+func (r *storageAdapter) SetData(ctx context.Context, key string, value []byte) error {
+	return r.client.Set(ctx, key, value, 0).Err()
 }
 
 func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
@@ -66,14 +50,14 @@ func setupTestWithMiniredis() (*DistributedCircuitBreaker[any], *miniredis.Minir
 }
 
 func pseudoSleepStorage(ctx context.Context, dcb *DistributedCircuitBreaker[any], period time.Duration) {
-	state, _ := dcb.store.GetState(ctx)
+	state, _ := dcb.getStoredState(ctx)
 
 	state.Expiry = state.Expiry.Add(-period)
 	// Reset counts if the interval has passed
 	if time.Now().After(state.Expiry) {
 		state.Counts = Counts{}
 	}
-	dcb.store.SetState(ctx, state)
+	dcb.setStoredState(ctx, state)
 }
 
 func successRequest(ctx context.Context, dcb *DistributedCircuitBreaker[any]) error {
@@ -174,11 +158,11 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 		assert.Nil(t, successRequest(ctx, dcb))
 	}
 
-	state, _ := dcb.store.GetState(ctx)
+	state, _ := dcb.getStoredState(ctx)
 	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
 
 	assert.Nil(t, failRequest(ctx, dcb))
-	state, _ = dcb.store.GetState(ctx)
+	state, _ = dcb.getStoredState(ctx)
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
 }
 
@@ -240,14 +224,14 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 			assert.NoError(t, failRequest(ctx, customDCB))
 		}
 
-		state, err := customDCB.store.GetState(ctx)
+		state, err := customDCB.getStoredState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, StateClosed, state.State)
 		assert.Equal(t, Counts{10, 5, 5, 0, 1}, state.Counts)
 
 		// Perform one more successful request
 		assert.NoError(t, successRequest(ctx, customDCB))
-		state, err = customDCB.store.GetState(ctx)
+		state, err = customDCB.getStoredState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
 
@@ -262,7 +246,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		// Check if the circuit breaker is now open
 		assert.Equal(t, StateOpen, customDCB.State(ctx))
 
-		state, err = customDCB.store.GetState(ctx)
+		state, err = customDCB.getStoredState(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, Counts{0, 0, 0, 0, 0}, state.Counts)
 	})
