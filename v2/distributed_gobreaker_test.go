@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var defaultDCB *DistributedCircuitBreaker[any]
 var customDCB *DistributedCircuitBreaker[any]
 
 type storeAdapter struct {
@@ -55,14 +54,19 @@ func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any
 }
 
 func pseudoSleepStorage(ctx context.Context, dcb *DistributedCircuitBreaker[any], period time.Duration) {
-	state, _ := dcb.getSharedState(ctx)
+	state, err := dcb.getSharedState(ctx)
+	if err != nil {
+		panic(err)
+	}
 
 	state.Expiry = state.Expiry.Add(-period)
 	// Reset counts if the interval has passed
 	if time.Now().After(state.Expiry) {
 		state.Counts = Counts{}
 	}
-	dcb.setSharedState(ctx, state)
+	if err := dcb.setSharedState(ctx, state); err != nil {
+		panic(err)
+	}
 }
 
 func successRequest(ctx context.Context, dcb *DistributedCircuitBreaker[any]) error {
