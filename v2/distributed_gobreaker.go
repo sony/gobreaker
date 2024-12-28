@@ -150,6 +150,6 @@ func (dcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func()
 		var defaultValue T
 		return defaultValue, err
 	}
-	
+
 	return t, e
 }
