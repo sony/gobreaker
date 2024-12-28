@@ -47,7 +47,10 @@ func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any
 			return counts.ConsecutiveFailures > 5
 		},
 	})
-	assert.Nil(err)
+	if err != nil {
+		panic(err)
+	}
+
 	return dcb, mr, client
 }
 
@@ -88,7 +91,7 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 
 	state, err := dcb.State(ctx)
 	assert.Equal(t, StateClosed, state)
-	assert.Nil(err)
+	assert.NoError(t, err)
 }
 
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
