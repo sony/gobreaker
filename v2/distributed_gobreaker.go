@@ -96,25 +96,41 @@ func (dcb *DistributedCircuitBreaker[T]) setSharedState(ctx context.Context, sta
 	return dcb.store.SetData(ctx, dcb.sharedStateKey(), data)
 }
 
+func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
+	dcb.mutex.Lock()
+	defer dcb.mutex.Unlock()
+
+	dcb.state = shared.State
+	dcb.generation = shared.Generation
+	dcb.counts = shared.Counts
+	dcb.expiry = shared.Expiry
+}
+
+func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
+	dcb.mutex.Lock()
+	defer dcb.mutex.Unlock()
+
+	return SharedState{
+		State:      dcb.state,
+		Generation: dcb.generation,
+		Counts:     dcb.counts,
+		Expiry:     dcb.expiry,
+	}
+}
+
 // State returns the State of DistributedCircuitBreaker.
 func (dcb *DistributedCircuitBreaker[T]) State(ctx context.Context) (State, error) {
-	state, err := dcb.getSharedState(ctx)
+	shared, err := dcb.getSharedState(ctx)
 	if err != nil {
-		return state.State, err
+		return shared.State, err
 	}
 
-	now := time.Now()
-	currentState, _ := dcb.currentState(state, now)
+	dcb.inject(shared)
+	state := dcb.State()
+	shared = dcb.extract()
 
-	// update the state if it has changed
-	if currentState != state.State {
-		state.State = currentState
-		if err := dcb.setSharedState(ctx, state); err != nil {
-			return state.State, err
-		}
-	}
-
-	return state.State, nil
+	err = dcb.setSharedState(ctx, shared)
+	return state, err
 }
 
 // Execute runs the given request if the DistributedCircuitBreaker accepts it.
