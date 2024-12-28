@@ -18,11 +18,11 @@ jobs:
         go-version: ${{matrix.go-version}}
     - name: Checkout
       uses: actions/checkout@v4
-    - name: pwd
-      run: pwd
     - name: Lint
       uses: golangci/golangci-lint-action@v6
+      with:
+        working-directory: ${{matrix.work-dir}}
     - name: go test
-      run: pwd && go test -v ./...
+      run: go test -v ./...
     - name: Run example
-      run: cd example && pwd && go build -o http_breaker && ./http_breaker
+      run: cd example && go build -o http_breaker && ./http_breaker
