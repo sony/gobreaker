@@ -22,3 +22,11 @@ jobs:
       run: go test -v ./...
     - name: Run example
       run: cd example && go build -o http_breaker && ./http_breaker
+    - name: gofmt v2
+      run: test -z "`cd v2 && gofmt -l .`"
+    - name: golint v2
+      run: test -z "`cd v2 && golint ./...`"
+    - name: go test v2
+      run: cd v2 && go test -v ./...
+    - name: Run example v2
+      run: cd v2/example && go build -o http_breaker && ./http_breaker
