@@ -141,6 +141,7 @@ func (dcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uin
 	if err != nil {
 		return 0, err
 	}
+
 	now := time.Now()
 	currentState, generation := dcb.currentState(state, now)
 
