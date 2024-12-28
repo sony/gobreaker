@@ -13,14 +13,14 @@ jobs:
         # working-directory: ${{matrix.work-dir}}
         working-directory: ./v2
     steps:
-    - name: pwd
-      run: pwd
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
         go-version: ${{matrix.go-version}}
     - name: Checkout
       uses: actions/checkout@v4
+    - name: pwd
+      run: pwd
     - name: Lint
       uses: golangci/golangci-lint-action@v6
     - name: go test
