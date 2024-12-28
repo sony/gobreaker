@@ -45,9 +45,9 @@ func NewDistributedCircuitBreaker[T any](ctx context.Context, store SharedDataSt
 		store:          store,
 	}
 
-	state, err := dcb.getSharedState(ctx)
+	_, err := dcb.getSharedState(ctx)
 	if err == ErrNoSharedState {
-		state = SharedState{
+		state := SharedState{
 			State:      dcb.state,
 			Generation: dcb.generation,
 			Counts:     dcb.counts,
