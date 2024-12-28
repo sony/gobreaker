@@ -96,178 +96,60 @@ func (dcb *DistributedCircuitBreaker[T]) setSharedState(ctx context.Context, sta
 	return dcb.store.SetData(ctx, dcb.sharedStateKey(), data)
 }
 
+func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
+	dcb.mutex.Lock()
+	defer dcb.mutex.Unlock()
+
+	dcb.state = shared.State
+	dcb.generation = shared.Generation
+	dcb.counts = shared.Counts
+	dcb.expiry = shared.Expiry
+}
+
+func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
+	dcb.mutex.Lock()
+	defer dcb.mutex.Unlock()
+
+	return SharedState{
+		State:      dcb.state,
+		Generation: dcb.generation,
+		Counts:     dcb.counts,
+		Expiry:     dcb.expiry,
+	}
+}
+
 // State returns the State of DistributedCircuitBreaker.
 func (dcb *DistributedCircuitBreaker[T]) State(ctx context.Context) (State, error) {
-	state, err := dcb.getSharedState(ctx)
+	shared, err := dcb.getSharedState(ctx)
 	if err != nil {
-		return state.State, err
+		return shared.State, err
 	}
 
-	now := time.Now()
-	currentState, _ := dcb.currentState(state, now)
+	dcb.inject(shared)
+	state := dcb.CircuitBreaker.State()
+	shared = dcb.extract()
 
-	// update the state if it has changed
-	if currentState != state.State {
-		state.State = currentState
-		if err := dcb.setSharedState(ctx, state); err != nil {
-			return state.State, err
-		}
-	}
-
-	return state.State, nil
+	err = dcb.setSharedState(ctx, shared)
+	return state, err
 }
 
 // Execute runs the given request if the DistributedCircuitBreaker accepts it.
-func (dcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (t T, err error) {
-	generation, err := dcb.beforeRequest(ctx)
+func (dcb *DistributedCircuitBreaker[T]) Execute(ctx context.Context, req func() (T, error)) (T, error) {
+	shared, err := dcb.getSharedState(ctx)
 	if err != nil {
 		var defaultValue T
 		return defaultValue, err
 	}
 
-	defer func() {
-		e := recover()
-		if e != nil {
-			ae := dcb.afterRequest(ctx, generation, false)
-			if err == nil {
-				err = ae
-			}
-			panic(e)
-		}
-	}()
+	dcb.inject(shared)
+	t, e := dcb.CircuitBreaker.Execute(req)
+	shared = dcb.extract()
 
-	result, err := req()
-	ae := dcb.afterRequest(ctx, generation, dcb.isSuccessful(err))
-	if err == nil {
-		err = ae
-	}
-	return result, err
-}
-
-func (dcb *DistributedCircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, error) {
-	state, err := dcb.getSharedState(ctx)
+	err = dcb.setSharedState(ctx, shared)
 	if err != nil {
-		return 0, err
+		var defaultValue T
+		return defaultValue, err
 	}
 
-	now := time.Now()
-	currentState, generation := dcb.currentState(state, now)
-
-	if currentState != state.State {
-		dcb.setState(&state, currentState, now)
-		err = dcb.setSharedState(ctx, state)
-		if err != nil {
-			return 0, err
-		}
-	}
-
-	if currentState == StateOpen {
-		return generation, ErrOpenState
-	} else if currentState == StateHalfOpen && state.Counts.Requests >= dcb.maxRequests {
-		return generation, ErrTooManyRequests
-	}
-
-	state.Counts.onRequest()
-	err = dcb.setSharedState(ctx, state)
-	if err != nil {
-		return 0, err
-	}
-
-	return generation, nil
-}
-
-func (dcb *DistributedCircuitBreaker[T]) afterRequest(ctx context.Context, before uint64, success bool) error {
-	state, err := dcb.getSharedState(ctx)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	currentState, generation := dcb.currentState(state, now)
-	if generation != before {
-		return nil
-	}
-
-	if success {
-		dcb.onSuccess(&state, currentState, now)
-	} else {
-		dcb.onFailure(&state, currentState, now)
-	}
-	return dcb.setSharedState(ctx, state)
-}
-
-func (dcb *DistributedCircuitBreaker[T]) onSuccess(state *SharedState, currentState State, now time.Time) {
-	if state.State == StateOpen {
-		state.State = currentState
-	}
-
-	switch currentState {
-	case StateClosed:
-		state.Counts.onSuccess()
-	case StateHalfOpen:
-		state.Counts.onSuccess()
-		if state.Counts.ConsecutiveSuccesses >= dcb.maxRequests {
-			dcb.setState(state, StateClosed, now)
-		}
-	}
-}
-
-func (dcb *DistributedCircuitBreaker[T]) onFailure(state *SharedState, currentState State, now time.Time) {
-	switch currentState {
-	case StateClosed:
-		state.Counts.onFailure()
-		if dcb.readyToTrip(state.Counts) {
-			dcb.setState(state, StateOpen, now)
-		}
-	case StateHalfOpen:
-		dcb.setState(state, StateOpen, now)
-	}
-}
-
-func (dcb *DistributedCircuitBreaker[T]) currentState(state SharedState, now time.Time) (State, uint64) {
-	switch state.State {
-	case StateClosed:
-		if !state.Expiry.IsZero() && state.Expiry.Before(now) {
-			dcb.toNewGeneration(&state, now)
-		}
-	case StateOpen:
-		if state.Expiry.Before(now) {
-			dcb.setState(&state, StateHalfOpen, now)
-		}
-	}
-	return state.State, state.Generation
-}
-
-func (dcb *DistributedCircuitBreaker[T]) setState(state *SharedState, newState State, now time.Time) {
-	if state.State == newState {
-		return
-	}
-
-	prev := state.State
-	state.State = newState
-
-	dcb.toNewGeneration(state, now)
-
-	if dcb.onStateChange != nil {
-		dcb.onStateChange(dcb.name, prev, newState)
-	}
-}
-
-func (dcb *DistributedCircuitBreaker[T]) toNewGeneration(state *SharedState, now time.Time) {
-	state.Generation++
-	state.Counts.clear()
-
-	var zero time.Time
-	switch state.State {
-	case StateClosed:
-		if dcb.interval == 0 {
-			state.Expiry = zero
-		} else {
-			state.Expiry = now.Add(dcb.interval)
-		}
-	case StateOpen:
-		state.Expiry = now.Add(dcb.timeout)
-	default: // StateHalfOpen
-		state.Expiry = zero
-	}
+	return t, e
 }
