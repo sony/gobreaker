@@ -1,7 +1,7 @@
 package gobreaker
 
 import (
-	"fmt"
+	"errors"
 	"runtime"
 	"testing"
 	"time"
@@ -55,7 +55,7 @@ func succeed2Step(cb *TwoStepCircuitBreaker) error {
 
 func fail(cb *CircuitBreaker) error {
 	msg := "fail"
-	_, err := cb.Execute(func() (interface{}, error) { return nil, fmt.Errorf(msg) })
+	_, err := cb.Execute(func() (interface{}, error) { return nil, errors.New(msg) })
 	if err.Error() == msg {
 		return nil
 	}
@@ -322,7 +322,7 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 }
 
 func TestPanicInRequest(t *testing.T) {
-	assert.Panics(t, func() { causePanic(defaultCB) })
+	assert.Panics(t, func() { _ = causePanic(defaultCB) })
 	assert.Equal(t, Counts{1, 0, 1, 0, 1}, defaultCB.counts)
 }
 

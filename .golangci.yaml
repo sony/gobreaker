@@ -1,0 +1,15 @@
+linters:
+  enable:
+  - gofmt
+  - goimports
+  - gosec
+  - misspell
+issues:
+  exclude-rules:
+  - path: _test\.go
+    linters:
+    - gosec
+    - govet
+  - path: example/
+    linters:
+    - gosec
