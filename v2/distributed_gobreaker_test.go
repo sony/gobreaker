@@ -116,7 +116,7 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	}
 
 	assertState(ctx, t, dcb, StateOpen)
-	
+
 	// Ensure requests fail when circuit is open
 	err := failRequest(ctx, dcb)
 	assert.Error(t, err)
