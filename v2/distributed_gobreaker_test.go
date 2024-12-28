@@ -38,7 +38,7 @@ func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any
 
 	store := &storeAdapter{client: client}
 
-	return NewDistributedCircuitBreaker[any](store, Settings{
+	dcb, err := NewDistributedCircuitBreaker[any](ctx, store, Settings{
 		Name:        "TestBreaker",
 		MaxRequests: 3,
 		Interval:    time.Second,
@@ -46,7 +46,9 @@ func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any
 		ReadyToTrip: func(counts Counts) bool {
 			return counts.ConsecutiveFailures > 5
 		},
-	}), mr, client
+	})
+	assert.Nil(err)
+	return dcb, mr, client
 }
 
 func pseudoSleepStorage(ctx context.Context, dcb *DistributedCircuitBreaker[any], period time.Duration) {
@@ -84,8 +86,9 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 	assert.Equal(t, time.Second*2, dcb.timeout)
 	assert.NotNil(t, dcb.readyToTrip)
 
-	state := dcb.State(ctx)
+	state, err := dcb.State(ctx)
 	assert.Equal(t, StateClosed, state)
+	assert.Nil(err)
 }
 
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
