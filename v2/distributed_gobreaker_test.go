@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var customDCB *DistributedCircuitBreaker[any]
-
 type storeAdapter struct {
 	client *redis.Client
 }
@@ -25,14 +23,17 @@ func (r *storeAdapter) SetData(ctx context.Context, key string, value []byte) er
 	return r.client.Set(ctx, key, value, 0).Err()
 }
 
-func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any], *miniredis.Miniredis, *redis.Client) {
-	mr, err := miniredis.Run()
+var redisServer *miniredis.Miniredis
+
+func setUpDCB(ctx context.Context) *DistributedCircuitBreaker[any] {
+	var err error 
+	redisServer, err := miniredis.Run()
 	if err != nil {
 		panic(err)
 	}
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr: redisServer.Addr(),
 	})
 
 	store := &storeAdapter{client: client}
@@ -50,10 +51,22 @@ func setupTestWithMiniredis(ctx context.Context) (*DistributedCircuitBreaker[any
 		panic(err)
 	}
 
-	return dcb, mr, client
+	return dcb
 }
 
-func pseudoSleepStorage(ctx context.Context, dcb *DistributedCircuitBreaker[any], period time.Duration) {
+func tearDownDCB(dcb *DistributedCircuitBreaker[any]) {
+	if dcb != nil {
+		dcb.store.client.Close()
+		dcb.store.client = nil
+	}
+
+	if redisServer != nil {
+		redisServer.Close()
+		redisServer = nil
+	}
+}
+
+func dcbPseudoSleep(ctx context.Context, dcb *DistributedCircuitBreaker[any], period time.Duration) {
 	state, err := dcb.getSharedState(ctx)
 	if err != nil {
 		panic(err)
@@ -64,7 +77,9 @@ func pseudoSleepStorage(ctx context.Context, dcb *DistributedCircuitBreaker[any]
 	if time.Now().After(state.Expiry) {
 		state.Counts = Counts{}
 	}
-	if err := dcb.setSharedState(ctx, state); err != nil {
+
+	err = dcb.setSharedState(ctx, state)
+	if err != nil {
 		panic(err)
 	}
 }
@@ -90,8 +105,8 @@ func assertState(ctx context.Context, t *testing.T, dcb *DistributedCircuitBreak
 
 func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 	ctx := context.Background()
-	dcb, mr, _ := setupTestWithMiniredis(ctx)
-	defer mr.Close()
+	dcb := setUpDCB(ctx)
+	defer tearDownDCB(dcb)
 
 	assert.Equal(t, "TestBreaker", dcb.Name())
 	assert.Equal(t, uint32(3), dcb.maxRequests)
@@ -104,8 +119,8 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	ctx := context.Background()
-	dcb, mr, _ := setupTestWithMiniredis(ctx)
-	defer mr.Close()
+	dcb := setUpDCB(ctx)
+	defer tearDownDCB(dcb)
 
 	// Check if initial state is closed
 	assertState(ctx, t, dcb, StateClosed)
@@ -114,16 +129,14 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		assert.NoError(t, failRequest(ctx, dcb))
 	}
-
 	assertState(ctx, t, dcb, StateOpen)
 
-	// Ensure requests fail when circuit is open
+	// Ensure requests fail when the circuit is open
 	err := failRequest(ctx, dcb)
-	assert.Error(t, err)
 	assert.Equal(t, ErrOpenState, err)
 
-	// Wait for timeout to transition to half-open
-	pseudoSleepStorage(ctx, dcb, dcb.timeout)
+	// Wait for timeout so that the state will move to half-open
+	dcbPseudoSleep(ctx, dcb, dcb.timeout)
 	assertState(ctx, t, dcb, StateHalfOpen)
 
 	// StateHalfOpen to StateClosed
@@ -141,8 +154,8 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 
 func TestDistributedCircuitBreakerExecution(t *testing.T) {
 	ctx := context.Background()
-	dcb, mr, _ := setupTestWithMiniredis(ctx)
-	defer mr.Close()
+	dcb := setUpDCB(ctx)
+	defer tearDownDCB(dcb)
 
 	// Test successful execution
 	result, err := dcb.Execute(ctx, func() (interface{}, error) {
@@ -161,29 +174,33 @@ func TestDistributedCircuitBreakerExecution(t *testing.T) {
 
 func TestDistributedCircuitBreakerCounts(t *testing.T) {
 	ctx := context.Background()
-	dcb, mr, _ := setupTestWithMiniredis(ctx)
-	defer mr.Close()
+	dcb := setUpDCB(ctx)
+	defer tearDownDCB(dcb)
 
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, successRequest(ctx, dcb))
 	}
 
-	state, _ := dcb.getSharedState(ctx)
+	state, err := dcb.getSharedState(ctx)
 	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
+	assert.NoError(err)
 
 	assert.Nil(t, failRequest(ctx, dcb))
-	state, _ = dcb.getSharedState(ctx)
+	state, err = dcb.getSharedState(ctx)
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
+	assert.NoError(err)
 }
 
+var customDCB *DistributedCircuitBreaker[any]
+
 func TestCustomDistributedCircuitBreaker(t *testing.T) {
+	ctx := context.Background()
+
 	mr, err := miniredis.Run()
 	if err != nil {
 		panic(err)
 	}
 	defer mr.Close()
-
-	ctx := context.Background()
 
 	client := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
@@ -228,7 +245,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
 
 		// Simulate time passing to reset counts
-		pseudoSleepStorage(ctx, customDCB, time.Second*30)
+		dcbPseudoSleep(ctx, customDCB, time.Second*30)
 
 		// Perform requests to trigger StateOpen
 		assert.NoError(t, successRequest(ctx, customDCB))
@@ -245,7 +262,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 
 	t.Run("Timeout and Half-Open State", func(t *testing.T) {
 		// Simulate timeout to transition to half-open state
-		pseudoSleepStorage(ctx, customDCB, time.Second*90)
+		dcbPseudoSleep(ctx, customDCB, time.Second*90)
 		assertState(ctx, t, customDCB, StateHalfOpen)
 
 		// Successful requests in half-open state should close the circuit
@@ -272,13 +289,13 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 		},
 	}
 
+	ctx := context.Background()
+
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("Failed to start miniredis: %v", err)
 	}
 	defer mr.Close()
-
-	ctx := context.Background()
 
 	client := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
@@ -310,7 +327,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 		assert.Equal(t, ErrOpenState, err)
 
 		// Simulate timeout to transition to Half-Open
-		pseudoSleepStorage(ctx, dcb, 6*time.Second)
+		dcbPseudoSleep(ctx, dcb, 6*time.Second)
 		assertState(ctx, t, dcb, StateHalfOpen)
 		assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
 
