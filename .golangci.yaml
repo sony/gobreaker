@@ -10,3 +10,6 @@ issues:
     linters:
     - gosec
     - govet
+  - path: example/
+    linters:
+    - gosec
