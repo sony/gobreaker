@@ -201,7 +201,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 	defer mr.Close()
 
 	ctx := context.Background()
-	
+
 	client := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
@@ -296,7 +296,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	defer mr.Close()
 
 	ctx := context.Background()
-	
+
 	client := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
