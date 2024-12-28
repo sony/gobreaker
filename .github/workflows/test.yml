@@ -14,19 +14,19 @@ jobs:
         go-version: ${{matrix.go-version}}
     - name: Checkout
       uses: actions/checkout@v2
-    - name: gofmt
+    - name: gofmt/v1
       run: test -z "`gofmt -l .`"
-    - name: golint
+    - name: golint/v1
       run: test -z "`golint ./...`"
-    - name: go test
+    - name: go-test/v1
       run: go test -v ./...
-    - name: Run example
+    - name: Run example/v1
       run: cd example && go build -o http_breaker && ./http_breaker
-    - name: gofmt v2
+    - name: gofmt/v2
       run: test -z "`cd v2 && gofmt -l .`"
-    - name: golint v2
+    - name: golint/v2
       run: test -z "`cd v2 && golint ./...`"
-    - name: go test v2
+    - name: go-test/v2
       run: cd v2 && go test -v ./...
-    - name: Run example v2
+    - name: Run example/v2
       run: cd v2/example && go build -o http_breaker && ./http_breaker
