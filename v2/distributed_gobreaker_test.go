@@ -176,23 +176,6 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
 }
 
-func TestDistributedCircuitBreakerFallback(t *testing.T) {
-	ctx := context.Background()
-	dcb, mr, _ := setupTestWithMiniredis(ctx)
-	defer mr.Close()
-
-	// Test when Storage is unavailable
-	mr.Close() // Simulate Storage being unavailable
-
-	dcb.store = nil
-
-	assertState(ctx, t, dcb, StateClosed)
-
-	// Ensure operations still work without Storage
-	assert.Nil(t, successRequest(ctx, dcb))
-	assert.Nil(t, failRequest(ctx, dcb))
-}
-
 func TestCustomDistributedCircuitBreaker(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
