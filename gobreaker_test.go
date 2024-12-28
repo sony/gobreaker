@@ -2,7 +2,6 @@ package gobreaker
 
 import (
 	"errors"
-	"fmt"
 	"runtime"
 	"testing"
 	"time"
