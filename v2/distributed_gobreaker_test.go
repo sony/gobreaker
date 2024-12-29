@@ -302,7 +302,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	})
 
 	store := &storeAdapter{
-		ctx:    context.Background()
+		ctx:    context.Background(),
 		client: client,
 	}
 
