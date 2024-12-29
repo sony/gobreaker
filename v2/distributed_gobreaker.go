@@ -56,7 +56,7 @@ func NewDistributedCircuitBreaker[T any](store SharedDataStore, settings Setting
 			err = e
 		}
 	}()
-	
+
 	_, err = dcb.getSharedState()
 	if err == ErrNoSharedState {
 		err = dcb.setSharedState(dcb.extract())
@@ -202,7 +202,7 @@ func (dcb *DistributedCircuitBreaker[T]) Execute(req func() (T, error)) (t T, er
 			err = e
 		}
 	}()
-	
+
 	dcb.inject(shared)
 	t, err = dcb.CircuitBreaker.Execute(req)
 	shared = dcb.extract()
