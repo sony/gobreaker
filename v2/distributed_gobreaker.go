@@ -48,7 +48,7 @@ func NewDistributedCircuitBreaker[T any](store SharedDataStore, settings Setting
 
 	err = dcb.lock()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		e := dcb.unlock()
@@ -57,7 +57,7 @@ func NewDistributedCircuitBreaker[T any](store SharedDataStore, settings Setting
 		}
 	}()
 	
-	_, err := dcb.getSharedState()
+	_, err = dcb.getSharedState()
 	if err == ErrNoSharedState {
 		err = dcb.setSharedState(dcb.extract())
 	}
