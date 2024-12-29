@@ -1,7 +1,6 @@
 package gobreaker
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"time"
