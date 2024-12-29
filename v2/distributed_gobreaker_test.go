@@ -26,7 +26,7 @@ func (sa *storeAdapter) Lock(name string) error {
 		return mutex.Lock()
 	}
 
-	mutex = sa.rs.NewMutex(name, redsync.WithExpiry(mutexTimeout)
+	mutex = sa.rs.NewMutex(name, redsync.WithExpiry(mutexTimeout))
 	sa.mutex[name] = mutex
 	return mutex.Lock()
 }
