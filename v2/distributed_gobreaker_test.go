@@ -68,7 +68,7 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 		ctx:    context.Background(),
 		client: client,
 		rs:   redsync.New(goredis.NewPool(client)),
-		mutex:  map[string]*redsync.Mutex{}
+		mutex:  map[string]*redsync.Mutex{},
 	}
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, Settings{
