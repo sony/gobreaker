@@ -14,7 +14,8 @@ require (
 require (
 	github.com/alicebob/miniredis/v2 v2.33.0
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/go-redsync/redsync/v4 v4.13.0
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/redis/go-redis/v9 v9.7.0
+	github.com/redis/go-redis/v9 v9.7.01
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
