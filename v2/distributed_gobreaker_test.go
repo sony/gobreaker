@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redsync/redsync/v4"
+	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
@@ -14,14 +16,48 @@ import (
 type storeAdapter struct {
 	ctx    context.Context
 	client *redis.Client
+	rs     *redsync.Redsync
+	mutex  map[string]*redsync.Mutex
 }
 
-func (sa *storeAdapter) GetData(key string) ([]byte, error) {
-	return sa.client.Get(sa.ctx, key).Bytes()
+func newStoreAdapter(client *redis.Client) *storeAdapter {
+	return &storeAdapter{
+		ctx:    context.Background(),
+		client: client,
+		rs:     redsync.New(goredis.NewPool(client)),
+		mutex:  map[string]*redsync.Mutex{},
+	}
 }
 
-func (sa *storeAdapter) SetData(key string, value []byte) error {
-	return sa.client.Set(sa.ctx, key, value, 0).Err()
+func (sa *storeAdapter) Lock(name string) error {
+	mutex, ok := sa.mutex[name]
+	if ok {
+		return mutex.Lock()
+	}
+
+	mutex = sa.rs.NewMutex(name, redsync.WithExpiry(mutexTimeout))
+	sa.mutex[name] = mutex
+	return mutex.Lock()
+}
+
+func (sa *storeAdapter) Unlock(name string) error {
+	mutex, ok := sa.mutex[name]
+	if ok {
+		var err error
+		ok, err = mutex.Unlock()
+		if ok && err == nil {
+			return nil
+		}
+	}
+	return errors.New("unlock failed")
+}
+
+func (sa *storeAdapter) GetData(name string) ([]byte, error) {
+	return sa.client.Get(sa.ctx, name).Bytes()
+}
+
+func (sa *storeAdapter) SetData(name string, data []byte) error {
+	return sa.client.Set(sa.ctx, name, data, 0).Err()
 }
 
 var redisServer *miniredis.Miniredis
@@ -37,10 +73,7 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 		Addr: redisServer.Addr(),
 	})
 
-	store := &storeAdapter{
-		ctx:    context.Background(),
-		client: client,
-	}
+	store := newStoreAdapter(client)
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "TestBreaker",
@@ -205,10 +238,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	store := &storeAdapter{
-		ctx:    context.Background(),
-		client: client,
-	}
+	store := newStoreAdapter(client)
 
 	customDCB, err = NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "CustomBreaker",
@@ -301,10 +331,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	store := &storeAdapter{
-		ctx:    context.Background(),
-		client: client,
-	}
+	store := newStoreAdapter(client)
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, customSt)
 	assert.NoError(t, err)
