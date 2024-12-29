@@ -20,6 +20,15 @@ type storeAdapter struct {
 	mutex  map[string]*redsync.Mutex
 }
 
+func newStoreAdapter(client *redis.Client) *storeAdapter {
+	return &storeAdapter{
+		ctx:    context.Background(),
+		client: client,
+		rs:     redsync.New(goredis.NewPool(client)),
+		mutex:  map[string]*redsync.Mutex{},
+	}
+}
+
 func (sa *storeAdapter) Lock(name string) error {
 	mutex, ok := sa.mutex[name]
 	if ok {
@@ -64,12 +73,7 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 		Addr: redisServer.Addr(),
 	})
 
-	store := &storeAdapter{
-		ctx:    context.Background(),
-		client: client,
-		rs:   redsync.New(goredis.NewPool(client)),
-		mutex:  map[string]*redsync.Mutex{},
-	}
+	store := newStoreAdapter(client)
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "TestBreaker",
@@ -234,10 +238,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	store := &storeAdapter{
-		ctx:    context.Background(),
-		client: client,
-	}
+	store := newStoreAdapter(client)
 
 	customDCB, err = NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "CustomBreaker",
@@ -330,10 +331,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	store := &storeAdapter{
-		ctx:    context.Background(),
-		client: client,
-	}
+	store := newStoreAdapter(client)
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, customSt)
 	assert.NoError(t, err)
