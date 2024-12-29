@@ -45,7 +45,7 @@ func NewDistributedCircuitBreaker[T any](store SharedDataStore, settings Setting
 		store:          store,
 	}
 
-	_, err := dcb.getSharedState(ctx)
+	_, err := dcb.getSharedState()
 	if err == ErrNoSharedState {
 		err = dcb.setSharedState(dcb.extract())
 	}
@@ -60,7 +60,7 @@ func (dcb *DistributedCircuitBreaker[T]) sharedStateKey() string {
 	return "gobreaker:" + dcb.name
 }
 
-func (dcb *DistributedCircuitBreaker[T]) getSharedState(ctx context.Context) (SharedState, error) {
+func (dcb *DistributedCircuitBreaker[T]) getSharedState() (SharedState, error) {
 	var state SharedState
 	if dcb.store == nil {
 		return state, ErrNoSharedStore
@@ -113,8 +113,8 @@ func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 }
 
 // State returns the State of DistributedCircuitBreaker.
-func (dcb *DistributedCircuitBreaker[T]) State(ctx context.Context) (State, error) {
-	shared, err := dcb.getSharedState(ctx)
+func (dcb *DistributedCircuitBreaker[T]) State() (State, error) {
+	shared, err := dcb.getSharedState()
 	if err != nil {
 		return shared.State, err
 	}
@@ -129,7 +129,7 @@ func (dcb *DistributedCircuitBreaker[T]) State(ctx context.Context) (State, erro
 
 // Execute runs the given request if the DistributedCircuitBreaker accepts it.
 func (dcb *DistributedCircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
-	shared, err := dcb.getSharedState(ctx)
+	shared, err := dcb.getSharedState()
 	if err != nil {
 		var defaultValue T
 		return defaultValue, err
