@@ -245,6 +245,14 @@ func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 	return result, err
 }
 
+// ManuallyTrip sets the CircuitBreaker into the open state.
+// This is useful when wrapping an external dependency that returns rate limiting information.
+// If the dependency is overwhelmed the breaker can be manually tripped straight away to prevent
+// further requests.
+func (cb *CircuitBreaker[T]) ManuallyTrip() {
+	cb.setState(StateOpen, time.Now())
+}
+
 // Name returns the name of the TwoStepCircuitBreaker.
 func (tscb *TwoStepCircuitBreaker[T]) Name() string {
 	return tscb.cb.Name()
