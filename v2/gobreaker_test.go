@@ -82,7 +82,7 @@ func newCustom() *CircuitBreaker[bool] {
 	customSt.Name = "cb"
 	customSt.MaxRequests = 3
 	customSt.Interval = time.Duration(30) * time.Second
-	customSt.Timeout = time.Duration(90) * time.Second
+	customSt.Timeout = func() time.Duration { return time.Duration(90) * time.Second }
 	customSt.ReadyToTrip = func(counts Counts) bool {
 		numReqs := counts.Requests
 		failureRatio := float64(counts.TotalFailures) / float64(numReqs)
@@ -102,7 +102,9 @@ func newNegativeDurationCB() *CircuitBreaker[bool] {
 	var negativeSt Settings
 	negativeSt.Name = "ncb"
 	negativeSt.Interval = time.Duration(-30) * time.Second
-	negativeSt.Timeout = time.Duration(-90) * time.Second
+	negativeSt.Timeout = func() time.Duration {
+		return time.Duration(-90) * time.Second
+	}
 
 	return NewCircuitBreaker[bool](negativeSt)
 }
@@ -128,7 +130,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, "", defaultCB.name)
 	assert.Equal(t, uint32(1), defaultCB.maxRequests)
 	assert.Equal(t, time.Duration(0), defaultCB.interval)
-	assert.Equal(t, time.Duration(60)*time.Second, defaultCB.timeout)
+	assert.Equal(t, time.Duration(60)*time.Second, defaultCB.timeout())
 	assert.NotNil(t, defaultCB.readyToTrip)
 	assert.Nil(t, defaultCB.onStateChange)
 	assert.Equal(t, StateClosed, defaultCB.state)
@@ -139,7 +141,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, "cb", customCB.name)
 	assert.Equal(t, uint32(3), customCB.maxRequests)
 	assert.Equal(t, time.Duration(30)*time.Second, customCB.interval)
-	assert.Equal(t, time.Duration(90)*time.Second, customCB.timeout)
+	assert.Equal(t, time.Duration(90)*time.Second, customCB.timeout())
 	assert.NotNil(t, customCB.readyToTrip)
 	assert.NotNil(t, customCB.onStateChange)
 	assert.Equal(t, StateClosed, customCB.state)
@@ -150,7 +152,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, "ncb", negativeDurationCB.name)
 	assert.Equal(t, uint32(1), negativeDurationCB.maxRequests)
 	assert.Equal(t, time.Duration(0)*time.Second, negativeDurationCB.interval)
-	assert.Equal(t, time.Duration(60)*time.Second, negativeDurationCB.timeout)
+	assert.Equal(t, time.Duration(60)*time.Second, negativeDurationCB.timeout())
 	assert.NotNil(t, negativeDurationCB.readyToTrip)
 	assert.Nil(t, negativeDurationCB.onStateChange)
 	assert.Equal(t, StateClosed, negativeDurationCB.state)
