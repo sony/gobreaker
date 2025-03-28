@@ -458,7 +458,7 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64) {
 	switch cb.state {
 	case StateClosed:
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
-			cb.toNewBucket(now)
+			cb.toNewBucket(cb.expiry)
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
@@ -506,11 +506,11 @@ func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 	cb.updateExpiry(now)
 }
 
-func (cb *CircuitBreaker[T]) toNewBucket(now time.Time) {
+func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
 	cb.windowCounts.bucketGeneration++
 	if cb.windowCounts.bucketGeneration == int(cb.windowCounts.numBuckets) {
 		cb.generation++
 	}
 	cb.windowCounts.rotate()
-	cb.updateExpiry(now)
+	cb.updateExpiry(lastExpiry)
 }
