@@ -55,8 +55,7 @@ type Counts struct {
 
 type WindowCounts struct {
 	Counts
-	mutex sync.Mutex
-	// counts       Counts
+	mutex            sync.Mutex
 	numBuckets       int64
 	bucketCounts     *list.List
 	bucketGeneration int
@@ -71,22 +70,10 @@ func NewWindowCounts(numBuckets int64) *WindowCounts {
 
 func (w *WindowCounts) ToCounts() Counts {
 	return w.Counts
-	// return Counts{
-	// 	Requests:             w.Requests,
-	// 	TotalSuccesses:       w.TotalSuccesses,
-	// 	TotalFailures:        w.TotalFailures,
-	// 	ConsecutiveSuccesses: w.ConsecutiveSuccesses,
-	// 	ConsecutiveFailures:  w.ConsecutiveFailures,
-	// }
 }
 
 func (w *WindowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 	w.Counts = counts
-	// w.Counts.Requests = counts.Requests
-	// w.Counts.TotalSuccesses = counts.TotalSuccesses
-	// w.Counts.TotalFailures = counts.TotalFailures
-	// w.Counts.ConsecutiveSuccesses = counts.ConsecutiveSuccesses
-	// w.Counts.ConsecutiveFailures = counts.ConsecutiveFailures
 
 	w.bucketCounts.Init()
 	for _, buckCounts := range bucketCounts {
@@ -95,6 +82,9 @@ func (w *WindowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 }
 
 func (w *WindowCounts) onRequest() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
 	currentBucket := w.bucketCounts.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
@@ -104,6 +94,9 @@ func (w *WindowCounts) onRequest() {
 }
 
 func (w *WindowCounts) onSuccess() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
 	currentBucket := w.bucketCounts.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
@@ -120,6 +113,9 @@ func (w *WindowCounts) onSuccess() {
 }
 
 func (w *WindowCounts) onFailure() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
 	currentBucket := w.bucketCounts.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
@@ -136,6 +132,8 @@ func (w *WindowCounts) onFailure() {
 }
 
 func (w *WindowCounts) clear() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
 	w.Requests = 0
 	w.TotalSuccesses = 0
 	w.TotalFailures = 0
@@ -178,14 +176,6 @@ func (w *WindowCounts) rotate() {
 	}
 }
 
-func (c *Counts) clear() {
-	c.Requests = 0
-	c.TotalSuccesses = 0
-	c.TotalFailures = 0
-	c.ConsecutiveSuccesses = 0
-	c.ConsecutiveFailures = 0
-}
-
 // Settings configures CircuitBreaker:
 //
 // Name is the name of the CircuitBreaker.
@@ -197,6 +187,11 @@ func (c *Counts) clear() {
 // Interval is the cyclic period of the closed state
 // for the CircuitBreaker to clear the internal Counts.
 // If Interval is less than or equal to 0, the CircuitBreaker doesn't clear internal Counts during the closed state.
+//
+// BucketPeriod is the period of the bucket used in a rolling window strategy
+// the Interval will be adjusted to be a multiple of BucketPeriod.
+// If BucketPeriod is less than or equal to 0, or equal to Interval, the CircuitBreaker
+// will use a fixed window strategy.
 //
 // Timeout is the period of the open state,
 // after which the state of the CircuitBreaker becomes half-open.
