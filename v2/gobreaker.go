@@ -221,20 +221,17 @@ type Settings struct {
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
 type CircuitBreaker[T any] struct {
-	name        string
-	maxRequests uint32
-	interval    time.Duration
-	// numBuckets    int64
+	name          string
+	maxRequests   uint32
+	interval      time.Duration
 	timeout       time.Duration
 	readyToTrip   func(counts Counts) bool
 	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
 
-	mutex      sync.Mutex
-	state      State
-	generation uint64
-	// counts       Counts
-	// bucketCounts *list.List
+	mutex        sync.Mutex
+	state        State
+	generation   uint64
 	windowCounts *WindowCounts
 	expiry       time.Time
 }
