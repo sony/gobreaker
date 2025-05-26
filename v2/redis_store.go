@@ -16,10 +16,7 @@ type RedisStore struct {
 	mutex  map[string]*redsync.Mutex
 }
 
-func NewRedisStore(addr string) *RedisStore {
-	client := redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
+func NewRedisStore(client *redis.Client) SharedDataStore {
 	return &RedisStore{
 		ctx:    context.Background(),
 		client: client,
