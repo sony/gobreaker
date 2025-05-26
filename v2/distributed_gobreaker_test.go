@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,11 +18,7 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 		panic(err)
 	}
 
-	client := redis.NewClient(&redis.Options{
-		Addr: redisServer.Addr(),
-	})
-
-	store := NewRedisStore(client)
+	store := NewRedisStore(redisServer.Addr())
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "TestBreaker",
@@ -183,11 +178,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 	}
 	defer mr.Close()
 
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-
-	store := NewRedisStore(client)
+	store := NewRedisStore(mr.Addr())
 
 	customDCB, err = NewDistributedCircuitBreaker[any](store, Settings{
 		Name:        "CustomBreaker",
@@ -276,11 +267,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	}
 	defer mr.Close()
 
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-
-	store := NewRedisStore(client)
+	store := NewRedisStore(mr.Addr())
 
 	dcb, err := NewDistributedCircuitBreaker[any](store, customSt)
 	assert.NoError(t, err)
