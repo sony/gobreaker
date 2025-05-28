@@ -1,4 +1,4 @@
-module github.com/sony/gobreaker/v2
+module github.com/Hinge/gobreaker/v2
 
 go 1.22.0
 
