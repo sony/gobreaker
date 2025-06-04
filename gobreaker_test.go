@@ -21,8 +21,9 @@ type StateChange struct {
 var stateChange StateChange
 
 func pseudoSleep(cb *CircuitBreaker, period time.Duration) {
-	if !cb.expiry.IsZero() {
-		cb.expiry = cb.expiry.Add(-period)
+	prevPeriod := cb.now().Sub(time.Now())
+	cb.now = func() time.Time {
+		return time.Now().Add(prevPeriod + period)
 	}
 }
 
@@ -93,6 +94,9 @@ func newCustom() *CircuitBreaker {
 	}
 	customSt.OnStateChange = func(name string, from State, to State) {
 		stateChange = StateChange{name, from, to}
+	}
+	customSt.Now = func() time.Time {
+		return time.Now()
 	}
 
 	return NewCircuitBreaker(customSt)
