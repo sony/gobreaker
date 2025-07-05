@@ -1,6 +1,7 @@
 package gobreaker
 
 import (
+	"container/list"
 	"encoding/json"
 	"errors"
 	"time"
@@ -15,10 +16,11 @@ var (
 
 // SharedState represents the shared state of DistributedCircuitBreaker.
 type SharedState struct {
-	State      State     `json:"state"`
-	Generation uint64    `json:"generation"`
-	Counts     Counts    `json:"counts"`
-	Expiry     time.Time `json:"expiry"`
+	State        State     `json:"state"`
+	Generation   uint64    `json:"generation"`
+	Counts       Counts    `json:"counts"`
+	BucketCounts []Counts  `json:"bucketcounts"`
+	Expiry       time.Time `json:"expiry"`
 }
 
 // SharedDataStore stores the shared state of DistributedCircuitBreaker.
@@ -143,20 +145,36 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 
 	dcb.state = shared.State
 	dcb.generation = shared.Generation
-	dcb.counts = shared.Counts
+	dcb.windowCounts.FromCounts(shared.Counts, shared.BucketCounts)
 	dcb.expiry = shared.Expiry
+}
+
+func toCountsArray(l *list.List) []Counts {
+	if l == nil {
+		return []Counts{}
+	}
+	counts := make([]Counts, l.Len())
+
+	ele := l.Front()
+	for i := 0; i < l.Len(); i++ {
+		counts[i], _ = ele.Value.(Counts)
+	}
+	return counts
 }
 
 func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 	dcb.mutex.Lock()
 	defer dcb.mutex.Unlock()
 
-	return SharedState{
-		State:      dcb.state,
-		Generation: dcb.generation,
-		Counts:     dcb.counts,
-		Expiry:     dcb.expiry,
+	state := SharedState{
+		State:        dcb.state,
+		Generation:   dcb.generation,
+		Counts:       dcb.windowCounts.Counts,
+		BucketCounts: toCountsArray(dcb.windowCounts.bucketCounts),
+		Expiry:       dcb.expiry,
 	}
+
+	return state
 }
 
 // State returns the State of DistributedCircuitBreaker.

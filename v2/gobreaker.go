@@ -3,6 +3,7 @@
 package gobreaker
 
 import (
+	"container/list"
 	"errors"
 	"fmt"
 	"sync"
@@ -52,28 +53,127 @@ type Counts struct {
 	ConsecutiveFailures  uint32
 }
 
-func (c *Counts) onRequest() {
-	c.Requests++
+type WindowCounts struct {
+	Counts
+	mutex            sync.Mutex
+	numBuckets       int64
+	bucketCounts     *list.List
+	bucketGeneration int
 }
 
-func (c *Counts) onSuccess() {
-	c.TotalSuccesses++
-	c.ConsecutiveSuccesses++
-	c.ConsecutiveFailures = 0
+func NewWindowCounts(numBuckets int64) *WindowCounts {
+	return &WindowCounts{
+		numBuckets:   numBuckets,
+		bucketCounts: list.New(),
+	}
 }
 
-func (c *Counts) onFailure() {
-	c.TotalFailures++
-	c.ConsecutiveFailures++
-	c.ConsecutiveSuccesses = 0
+func (w *WindowCounts) ToCounts() Counts {
+	return w.Counts
 }
 
-func (c *Counts) clear() {
-	c.Requests = 0
-	c.TotalSuccesses = 0
-	c.TotalFailures = 0
-	c.ConsecutiveSuccesses = 0
-	c.ConsecutiveFailures = 0
+func (w *WindowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
+	w.Counts = counts
+
+	w.bucketCounts.Init()
+	for _, buckCounts := range bucketCounts {
+		w.bucketCounts.PushBack(buckCounts)
+	}
+}
+
+func (w *WindowCounts) onRequest() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	currentBucket := w.bucketCounts.Back()
+	currentBucketValue, _ := currentBucket.Value.(Counts)
+
+	currentBucketValue.Requests++
+	w.Requests++
+	currentBucket.Value = currentBucketValue
+}
+
+func (w *WindowCounts) onSuccess() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	currentBucket := w.bucketCounts.Back()
+	currentBucketValue, _ := currentBucket.Value.(Counts)
+
+	currentBucketValue.TotalSuccesses++
+	w.TotalSuccesses++
+
+	currentBucketValue.ConsecutiveSuccesses++
+	w.ConsecutiveSuccesses++
+
+	currentBucketValue.ConsecutiveFailures = 0
+	w.ConsecutiveFailures = 0
+
+	currentBucket.Value = currentBucketValue
+}
+
+func (w *WindowCounts) onFailure() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	currentBucket := w.bucketCounts.Back()
+	currentBucketValue, _ := currentBucket.Value.(Counts)
+
+	currentBucketValue.TotalFailures++
+	w.TotalFailures++
+
+	currentBucketValue.ConsecutiveFailures++
+	w.ConsecutiveFailures++
+
+	currentBucketValue.ConsecutiveSuccesses = 0
+	w.ConsecutiveSuccesses = 0
+
+	currentBucket.Value = currentBucketValue
+}
+
+func (w *WindowCounts) clear() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.Requests = 0
+	w.TotalSuccesses = 0
+	w.TotalFailures = 0
+	w.ConsecutiveSuccesses = 0
+	w.ConsecutiveFailures = 0
+
+	w.bucketGeneration = 0
+
+	w.bucketCounts.Init()
+	w.bucketCounts.PushBack(Counts{})
+}
+
+func (w *WindowCounts) rotate() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	w.bucketCounts.PushBack(Counts{})
+
+	if w.bucketCounts.Len() <= int(w.numBuckets) {
+		return
+	}
+
+	oldBucket := w.bucketCounts.Front()
+
+	if oldBucket != nil {
+		oldBucketCount, _ := oldBucket.Value.(Counts)
+
+		if w.ConsecutiveSuccesses == w.TotalSuccesses {
+			w.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
+		}
+
+		if w.ConsecutiveFailures == w.TotalFailures {
+			w.ConsecutiveFailures -= oldBucketCount.ConsecutiveFailures
+		}
+
+		w.Requests -= oldBucketCount.Requests
+		w.TotalSuccesses -= oldBucketCount.TotalSuccesses
+		w.TotalFailures -= oldBucketCount.TotalFailures
+		w.bucketCounts.Remove(oldBucket)
+	}
 }
 
 // Settings configures CircuitBreaker:
@@ -87,6 +187,11 @@ func (c *Counts) clear() {
 // Interval is the cyclic period of the closed state
 // for the CircuitBreaker to clear the internal Counts.
 // If Interval is less than or equal to 0, the CircuitBreaker doesn't clear internal Counts during the closed state.
+//
+// BucketPeriod is the period of the bucket used in a rolling window strategy
+// the Interval will be adjusted to be a multiple of BucketPeriod.
+// If BucketPeriod is less than or equal to 0, or equal to Interval, the CircuitBreaker
+// will use a fixed window strategy.
 //
 // Timeout is the period of the open state,
 // after which the state of the CircuitBreaker becomes half-open.
@@ -107,6 +212,7 @@ type Settings struct {
 	Name          string
 	MaxRequests   uint32
 	Interval      time.Duration
+	BucketPeriod  time.Duration
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
@@ -123,11 +229,11 @@ type CircuitBreaker[T any] struct {
 	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
 
-	mutex      sync.Mutex
-	state      State
-	generation uint64
-	counts     Counts
-	expiry     time.Time
+	mutex        sync.Mutex
+	state        State
+	generation   uint64
+	windowCounts *WindowCounts
+	expiry       time.Time
 }
 
 // TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
@@ -150,11 +256,19 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.maxRequests = st.MaxRequests
 	}
 
+	var numBuckets int64 = 1
 	if st.Interval <= 0 {
 		cb.interval = defaultInterval
 	} else {
-		cb.interval = st.Interval
+		if st.BucketPeriod <= 0 || st.BucketPeriod == st.Interval {
+			cb.interval = st.Interval
+		} else {
+			cb.interval = st.BucketPeriod
+			numBuckets = st.Interval.Milliseconds() / st.BucketPeriod.Milliseconds()
+		}
 	}
+
+	cb.windowCounts = NewWindowCounts(numBuckets)
 
 	if st.Timeout <= 0 {
 		cb.timeout = defaultTimeout
@@ -217,7 +331,7 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
-	return cb.counts
+	return cb.windowCounts.ToCounts()
 }
 
 // Execute runs the given request if the CircuitBreaker accepts it.
@@ -283,11 +397,11 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, error) {
 
 	if state == StateOpen {
 		return generation, ErrOpenState
-	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
+	} else if state == StateHalfOpen && cb.windowCounts.Requests >= cb.maxRequests {
 		return generation, ErrTooManyRequests
 	}
 
-	cb.counts.onRequest()
+	cb.windowCounts.onRequest()
 	return generation, nil
 }
 
@@ -311,10 +425,10 @@ func (cb *CircuitBreaker[T]) afterRequest(before uint64, success bool) {
 func (cb *CircuitBreaker[T]) onSuccess(state State, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onSuccess()
+		cb.windowCounts.onSuccess()
 	case StateHalfOpen:
-		cb.counts.onSuccess()
-		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
+		cb.windowCounts.onSuccess()
+		if cb.windowCounts.ConsecutiveSuccesses >= cb.maxRequests {
 			cb.setState(StateClosed, now)
 		}
 	}
@@ -323,8 +437,8 @@ func (cb *CircuitBreaker[T]) onSuccess(state State, now time.Time) {
 func (cb *CircuitBreaker[T]) onFailure(state State, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onFailure()
-		if cb.readyToTrip(cb.counts) {
+		cb.windowCounts.onFailure()
+		if cb.readyToTrip(cb.windowCounts.ToCounts()) {
 			cb.setState(StateOpen, now)
 		}
 	case StateHalfOpen:
@@ -336,7 +450,7 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64) {
 	switch cb.state {
 	case StateClosed:
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
-			cb.toNewGeneration(now)
+			cb.toNewBucket(cb.expiry)
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
@@ -361,10 +475,7 @@ func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
 	}
 }
 
-func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
-	cb.generation++
-	cb.counts.clear()
-
+func (cb *CircuitBreaker[T]) updateExpiry(now time.Time) {
 	var zero time.Time
 	switch cb.state {
 	case StateClosed:
@@ -378,4 +489,20 @@ func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 	default: // StateHalfOpen
 		cb.expiry = zero
 	}
+}
+
+func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
+	cb.generation++
+
+	cb.windowCounts.clear()
+	cb.updateExpiry(now)
+}
+
+func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
+	cb.windowCounts.bucketGeneration++
+	if cb.windowCounts.bucketGeneration == int(cb.windowCounts.numBuckets) {
+		cb.generation++
+	}
+	cb.windowCounts.rotate()
+	cb.updateExpiry(lastExpiry)
 }
