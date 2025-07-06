@@ -211,6 +211,11 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateClosed, defaultCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts)
 	assert.True(t, defaultCB.expiry.IsZero())
+
+	// Manually opened
+	assert.Equal(t, StateClosed, defaultCB.State())
+	defaultCB.ManuallyTrip()
+	assert.Equal(t, StateOpen, defaultCB.State())
 }
 
 func TestCustomCircuitBreaker(t *testing.T) {
