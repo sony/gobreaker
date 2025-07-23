@@ -107,7 +107,7 @@ type Settings struct {
 	Name          string
 	MaxRequests   uint32
 	Interval      time.Duration
-	Timeout       time.Duration
+	Timeout       func() time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
@@ -118,7 +118,7 @@ type CircuitBreaker[T any] struct {
 	name          string
 	maxRequests   uint32
 	interval      time.Duration
-	timeout       time.Duration
+	timeout       func() time.Duration
 	readyToTrip   func(counts Counts) bool
 	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
@@ -156,10 +156,14 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.interval = st.Interval
 	}
 
-	if st.Timeout <= 0 {
+	if st.Timeout == nil {
 		cb.timeout = defaultTimeout
 	} else {
-		cb.timeout = st.Timeout
+		if st.Timeout() <= 0 {
+			cb.timeout = defaultTimeout
+		} else {
+			cb.timeout = st.Timeout
+		}
 	}
 
 	if st.ReadyToTrip == nil {
@@ -185,9 +189,11 @@ func NewTwoStepCircuitBreaker[T any](st Settings) *TwoStepCircuitBreaker[T] {
 		cb: NewCircuitBreaker[T](st),
 	}
 }
+func defaultTimeout() time.Duration {
+	return 60 * time.Second
+}
 
 const defaultInterval = time.Duration(0) * time.Second
-const defaultTimeout = time.Duration(60) * time.Second
 
 func defaultReadyToTrip(counts Counts) bool {
 	return counts.ConsecutiveFailures > 5
@@ -374,7 +380,7 @@ func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 			cb.expiry = now.Add(cb.interval)
 		}
 	case StateOpen:
-		cb.expiry = now.Add(cb.timeout)
+		cb.expiry = now.Add(cb.timeout())
 	default: // StateHalfOpen
 		cb.expiry = zero
 	}
