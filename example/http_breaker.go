@@ -31,7 +31,7 @@ func Get(url string) ([]byte, error) {
 		}
 
 		defer resp.Body.Close()
-		return io.ReadAll(resp.Body)
+		return ioutil.ReadAll(resp.Body)
 	})
 	if err != nil {
 		return nil, err
