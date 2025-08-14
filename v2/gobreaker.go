@@ -62,9 +62,14 @@ type windowCounts struct {
 }
 
 func newWindowCounts(numBuckets int64) *windowCounts {
+	l := list.New()
+	for i := 0; i < int(numBuckets); i++ {
+		l.PushBack(Counts{})
+	}
+
 	return &windowCounts{
 		numBuckets: numBuckets,
-		buckets:    list.New(),
+		buckets:    l,
 	}
 }
 
@@ -128,7 +133,9 @@ func (w *windowCounts) clear() {
 	w.bucketGeneration = 0
 
 	w.buckets.Init()
-	w.buckets.PushBack(Counts{})
+	for i := 0; i < int(w.numBuckets); i++ {
+		w.buckets.PushBack(Counts{})
+	}
 }
 
 func (w *windowCounts) rotate() {
