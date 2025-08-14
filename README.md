@@ -105,12 +105,7 @@ func Get(url string) ([]byte, error) {
 		}
 
 		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-
-		return body, nil
+		return io.ReadAll(resp.Body)
 	})
 	if err != nil {
 		return nil, err
