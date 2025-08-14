@@ -133,29 +133,29 @@ func (w *windowCounts) clear() {
 
 func (w *windowCounts) rotate() {
 	w.buckets.PushBack(Counts{})
-
 	if w.buckets.Len() <= int(w.numBuckets) {
 		return
 	}
 
 	oldBucket := w.buckets.Front()
-
-	if oldBucket != nil {
-		oldBucketCount, _ := oldBucket.Value.(Counts)
-
-		if w.ConsecutiveSuccesses == w.TotalSuccesses {
-			w.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
-		}
-
-		if w.ConsecutiveFailures == w.TotalFailures {
-			w.ConsecutiveFailures -= oldBucketCount.ConsecutiveFailures
-		}
-
-		w.Requests -= oldBucketCount.Requests
-		w.TotalSuccesses -= oldBucketCount.TotalSuccesses
-		w.TotalFailures -= oldBucketCount.TotalFailures
-		w.buckets.Remove(oldBucket)
+	if oldBucket == nil {
+		return
 	}
+
+	oldBucketCount, _ := oldBucket.Value.(Counts)
+
+	if w.ConsecutiveSuccesses == w.TotalSuccesses {
+		w.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
+	}
+
+	if w.ConsecutiveFailures == w.TotalFailures {
+		w.ConsecutiveFailures -= oldBucketCount.ConsecutiveFailures
+	}
+
+	w.Requests -= oldBucketCount.Requests
+	w.TotalSuccesses -= oldBucketCount.TotalSuccesses
+	w.TotalFailures -= oldBucketCount.TotalFailures
+	w.buckets.Remove(oldBucket)
 }
 
 // Settings configures CircuitBreaker:
