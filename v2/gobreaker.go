@@ -3,7 +3,6 @@
 package gobreaker
 
 import (
-	"container/list"
 	"errors"
 	"fmt"
 	"sync"
@@ -56,71 +55,62 @@ type Counts struct {
 type windowCounts struct {
 	Counts
 
-	numBuckets       int64
-	buckets          *list.List
+	buckets          []Counts
+	current          uint
 	bucketGeneration int
 }
 
 func newWindowCounts(numBuckets int64) *windowCounts {
-	l := list.New()
-	for i := 0; i < int(numBuckets); i++ {
-		l.PushBack(Counts{})
-	}
+	buckets := make([]Counts, numBuckets)
 
 	return &windowCounts{
-		numBuckets: numBuckets,
-		buckets:    l,
+		buckets: buckets,
+		current: 0,
 	}
 }
 
 func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 	w.Counts = counts
 
-	w.buckets.Init()
-	for _, buckCounts := range bucketCounts {
-		w.buckets.PushBack(buckCounts)
+	// Preserve the original number of buckets if bucketCounts is shorter or empty
+	originalLen := len(w.buckets)
+	if len(bucketCounts) < originalLen {
+		// Reset to original size with empty buckets
+		w.buckets = make([]Counts, originalLen)
+		// Copy what we have
+		copy(w.buckets, bucketCounts)
+	} else {
+		w.buckets = make([]Counts, len(bucketCounts))
+		copy(w.buckets, bucketCounts)
 	}
+	w.current = 0
 }
 
 func (w *windowCounts) onRequest() {
-	currentBucket := w.buckets.Back()
-	currentBucketValue, _ := currentBucket.Value.(Counts)
-
-	currentBucketValue.Requests++
+	w.buckets[w.current].Requests++
 	w.Requests++
-	currentBucket.Value = currentBucketValue
 }
 
 func (w *windowCounts) onSuccess() {
-	currentBucket := w.buckets.Back()
-	currentBucketValue, _ := currentBucket.Value.(Counts)
-
-	currentBucketValue.TotalSuccesses++
+	w.buckets[w.current].TotalSuccesses++
 	w.TotalSuccesses++
 
-	currentBucketValue.ConsecutiveSuccesses++
+	w.buckets[w.current].ConsecutiveSuccesses++
 	w.ConsecutiveSuccesses++
 
-	currentBucketValue.ConsecutiveFailures = 0
+	w.buckets[w.current].ConsecutiveFailures = 0
 	w.ConsecutiveFailures = 0
-
-	currentBucket.Value = currentBucketValue
 }
 
 func (w *windowCounts) onFailure() {
-	currentBucket := w.buckets.Back()
-	currentBucketValue, _ := currentBucket.Value.(Counts)
-
-	currentBucketValue.TotalFailures++
+	w.buckets[w.current].TotalFailures++
 	w.TotalFailures++
 
-	currentBucketValue.ConsecutiveFailures++
+	w.buckets[w.current].ConsecutiveFailures++
 	w.ConsecutiveFailures++
 
-	currentBucketValue.ConsecutiveSuccesses = 0
+	w.buckets[w.current].ConsecutiveSuccesses = 0
 	w.ConsecutiveSuccesses = 0
-
-	currentBucket.Value = currentBucketValue
 }
 
 func (w *windowCounts) clear() {
@@ -131,26 +121,21 @@ func (w *windowCounts) clear() {
 	w.ConsecutiveFailures = 0
 
 	w.bucketGeneration = 0
+	w.current = 0
 
-	w.buckets.Init()
-	for i := 0; i < int(w.numBuckets); i++ {
-		w.buckets.PushBack(Counts{})
+	for i := range w.buckets {
+		w.buckets[i] = Counts{}
 	}
 }
 
 func (w *windowCounts) rotate() {
-	w.buckets.PushBack(Counts{})
-	if w.buckets.Len() <= int(w.numBuckets) {
-		return
-	}
+	// Move to next bucket (circular)
+	w.current = (w.current + 1) % uint(len(w.buckets))
 
-	oldBucket := w.buckets.Front()
-	if oldBucket == nil {
-		return
-	}
+	// Get the old bucket counts that we're about to overwrite
+	oldBucketCount := w.buckets[w.current]
 
-	oldBucketCount, _ := oldBucket.Value.(Counts)
-
+	// Subtract old bucket counts from totals
 	if w.ConsecutiveSuccesses == w.TotalSuccesses {
 		w.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
 	}
@@ -162,7 +147,9 @@ func (w *windowCounts) rotate() {
 	w.Requests -= oldBucketCount.Requests
 	w.TotalSuccesses -= oldBucketCount.TotalSuccesses
 	w.TotalFailures -= oldBucketCount.TotalFailures
-	w.buckets.Remove(oldBucket)
+
+	// Clear the new current bucket
+	w.buckets[w.current] = Counts{}
 }
 
 // Settings configures CircuitBreaker:
@@ -489,7 +476,7 @@ func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 
 func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
 	cb.counts.bucketGeneration++
-	if cb.counts.bucketGeneration == int(cb.counts.numBuckets) {
+	if cb.counts.bucketGeneration == len(cb.counts.buckets) {
 		cb.generation++
 	}
 	cb.counts.rotate()

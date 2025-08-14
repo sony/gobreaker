@@ -1,7 +1,6 @@
 package gobreaker
 
 import (
-	"container/list"
 	"encoding/json"
 	"errors"
 	"time"
@@ -149,16 +148,13 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 	dcb.expiry = shared.Expiry
 }
 
-func toCountsArray(l *list.List) []Counts {
-	if l == nil {
+func toCountsArray(buckets []Counts) []Counts {
+	if buckets == nil {
 		return []Counts{}
 	}
-	counts := make([]Counts, l.Len())
-
-	ele := l.Front()
-	for i := 0; i < l.Len(); i++ {
-		counts[i], _ = ele.Value.(Counts)
-	}
+	// Return a copy of the slice
+	counts := make([]Counts, len(buckets))
+	copy(counts, buckets)
 	return counts
 }
 
