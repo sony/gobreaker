@@ -19,7 +19,7 @@ type SharedState struct {
 	State        State     `json:"state"`
 	Generation   uint64    `json:"generation"`
 	Counts       Counts    `json:"counts"`
-	BucketCounts []Counts  `json:"bucketcounts"`
+	BucketCounts []Counts  `json:"bucketCounts"`
 	Expiry       time.Time `json:"expiry"`
 }
 
