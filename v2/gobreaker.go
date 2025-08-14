@@ -53,7 +53,7 @@ type Counts struct {
 	ConsecutiveFailures  uint32
 }
 
-type WindowCounts struct {
+type windowCounts struct {
 	Counts
 	mutex            sync.Mutex
 	numBuckets       int64
@@ -61,18 +61,14 @@ type WindowCounts struct {
 	bucketGeneration int
 }
 
-func NewWindowCounts(numBuckets int64) *WindowCounts {
-	return &WindowCounts{
+func newWindowCounts(numBuckets int64) *windowCounts {
+	return &windowCounts{
 		numBuckets:   numBuckets,
 		bucketCounts: list.New(),
 	}
 }
 
-func (w *WindowCounts) ToCounts() Counts {
-	return w.Counts
-}
-
-func (w *WindowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
+func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 	w.Counts = counts
 
 	w.bucketCounts.Init()
@@ -81,7 +77,7 @@ func (w *WindowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 	}
 }
 
-func (w *WindowCounts) onRequest() {
+func (w *windowCounts) onRequest() {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -93,7 +89,7 @@ func (w *WindowCounts) onRequest() {
 	currentBucket.Value = currentBucketValue
 }
 
-func (w *WindowCounts) onSuccess() {
+func (w *windowCounts) onSuccess() {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -112,7 +108,7 @@ func (w *WindowCounts) onSuccess() {
 	currentBucket.Value = currentBucketValue
 }
 
-func (w *WindowCounts) onFailure() {
+func (w *windowCounts) onFailure() {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -131,7 +127,7 @@ func (w *WindowCounts) onFailure() {
 	currentBucket.Value = currentBucketValue
 }
 
-func (w *WindowCounts) clear() {
+func (w *windowCounts) clear() {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	w.Requests = 0
@@ -146,7 +142,7 @@ func (w *WindowCounts) clear() {
 	w.bucketCounts.PushBack(Counts{})
 }
 
-func (w *WindowCounts) rotate() {
+func (w *windowCounts) rotate() {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -229,11 +225,11 @@ type CircuitBreaker[T any] struct {
 	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
 
-	mutex        sync.Mutex
-	state        State
-	generation   uint64
-	windowCounts *WindowCounts
-	expiry       time.Time
+	mutex      sync.Mutex
+	state      State
+	generation uint64
+	counts     *windowCounts
+	expiry     time.Time
 }
 
 // TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
@@ -268,7 +264,7 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		}
 	}
 
-	cb.windowCounts = NewWindowCounts(numBuckets)
+	cb.counts = newWindowCounts(numBuckets)
 
 	if st.Timeout <= 0 {
 		cb.timeout = defaultTimeout
@@ -331,7 +327,7 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
-	return cb.windowCounts.ToCounts()
+	return cb.counts.Counts
 }
 
 // Execute runs the given request if the CircuitBreaker accepts it.
@@ -397,11 +393,11 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, error) {
 
 	if state == StateOpen {
 		return generation, ErrOpenState
-	} else if state == StateHalfOpen && cb.windowCounts.Requests >= cb.maxRequests {
+	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
 		return generation, ErrTooManyRequests
 	}
 
-	cb.windowCounts.onRequest()
+	cb.counts.onRequest()
 	return generation, nil
 }
 
@@ -425,10 +421,10 @@ func (cb *CircuitBreaker[T]) afterRequest(before uint64, success bool) {
 func (cb *CircuitBreaker[T]) onSuccess(state State, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.windowCounts.onSuccess()
+		cb.counts.onSuccess()
 	case StateHalfOpen:
-		cb.windowCounts.onSuccess()
-		if cb.windowCounts.ConsecutiveSuccesses >= cb.maxRequests {
+		cb.counts.onSuccess()
+		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
 			cb.setState(StateClosed, now)
 		}
 	}
@@ -437,8 +433,8 @@ func (cb *CircuitBreaker[T]) onSuccess(state State, now time.Time) {
 func (cb *CircuitBreaker[T]) onFailure(state State, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.windowCounts.onFailure()
-		if cb.readyToTrip(cb.windowCounts.ToCounts()) {
+		cb.counts.onFailure()
+		if cb.readyToTrip(cb.counts.Counts) {
 			cb.setState(StateOpen, now)
 		}
 	case StateHalfOpen:
@@ -494,15 +490,15 @@ func (cb *CircuitBreaker[T]) updateExpiry(now time.Time) {
 func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 	cb.generation++
 
-	cb.windowCounts.clear()
+	cb.counts.clear()
 	cb.updateExpiry(now)
 }
 
 func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
-	cb.windowCounts.bucketGeneration++
-	if cb.windowCounts.bucketGeneration == int(cb.windowCounts.numBuckets) {
+	cb.counts.bucketGeneration++
+	if cb.counts.bucketGeneration == int(cb.counts.numBuckets) {
 		cb.generation++
 	}
-	cb.windowCounts.rotate()
+	cb.counts.rotate()
 	cb.updateExpiry(lastExpiry)
 }

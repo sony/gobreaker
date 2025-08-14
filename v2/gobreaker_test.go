@@ -153,7 +153,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.NotNil(t, defaultCB.readyToTrip)
 	assert.Nil(t, defaultCB.onStateChange)
 	assert.Equal(t, StateClosed, defaultCB.state)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts.Counts)
 	assert.True(t, defaultCB.expiry.IsZero())
 
 	customCB := newCustom()
@@ -164,19 +164,19 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.NotNil(t, customCB.readyToTrip)
 	assert.NotNil(t, customCB.onStateChange)
 	assert.Equal(t, StateClosed, customCB.state)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts.Counts)
 	assert.False(t, customCB.expiry.IsZero())
 
 	rollingWindowCB := newRollingWindow()
 	assert.Equal(t, "rw", rollingWindowCB.name)
 	assert.Equal(t, uint32(3), rollingWindowCB.maxRequests)
 	assert.Equal(t, time.Duration(3)*time.Second, rollingWindowCB.interval)
-	assert.Equal(t, int64(10), rollingWindowCB.windowCounts.numBuckets)
+	assert.Equal(t, int64(10), rollingWindowCB.counts.numBuckets)
 	assert.Equal(t, time.Duration(90)*time.Second, rollingWindowCB.timeout)
 	assert.NotNil(t, rollingWindowCB.readyToTrip)
 	assert.NotNil(t, rollingWindowCB.onStateChange)
 	assert.Equal(t, StateClosed, rollingWindowCB.state)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.counts.Counts)
 	assert.False(t, rollingWindowCB.expiry.IsZero())
 
 	negativeDurationCB := newNegativeDurationCB()
@@ -187,7 +187,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.NotNil(t, negativeDurationCB.readyToTrip)
 	assert.Nil(t, negativeDurationCB.onStateChange)
 	assert.Equal(t, StateClosed, negativeDurationCB.state)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, negativeDurationCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, negativeDurationCB.counts.Counts)
 	assert.True(t, negativeDurationCB.expiry.IsZero())
 }
 
@@ -198,27 +198,27 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 		assert.Nil(t, fail(defaultCB))
 	}
 	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{5, 0, 5, 0, 5}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{5, 0, 5, 0, 5}, defaultCB.counts.Counts)
 
 	assert.Nil(t, succeed(defaultCB))
 	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{6, 1, 5, 1, 0}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{6, 1, 5, 1, 0}, defaultCB.counts.Counts)
 
 	assert.Nil(t, fail(defaultCB))
 	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{7, 1, 6, 0, 1}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{7, 1, 6, 0, 1}, defaultCB.counts.Counts)
 
 	// StateClosed to StateOpen
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, fail(defaultCB)) // 6 consecutive failures
 	}
 	assert.Equal(t, StateOpen, defaultCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts.Counts)
 	assert.False(t, defaultCB.expiry.IsZero())
 
 	assert.Error(t, succeed(defaultCB))
 	assert.Error(t, fail(defaultCB))
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts.Counts)
 
 	pseudoSleep(defaultCB, time.Duration(59)*time.Second)
 	assert.Equal(t, StateOpen, defaultCB.State())
@@ -231,7 +231,7 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	// StateHalfOpen to StateOpen
 	assert.Nil(t, fail(defaultCB))
 	assert.Equal(t, StateOpen, defaultCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts.Counts)
 	assert.False(t, defaultCB.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
@@ -242,7 +242,7 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	// StateHalfOpen to StateClosed
 	assert.Nil(t, succeed(defaultCB))
 	assert.Equal(t, StateClosed, defaultCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.counts.Counts)
 	assert.True(t, defaultCB.expiry.IsZero())
 }
 
@@ -254,23 +254,23 @@ func TestCustomCircuitBreaker(t *testing.T) {
 		assert.Nil(t, fail(customCB))
 	}
 	assert.Equal(t, StateClosed, customCB.State())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, customCB.counts.Counts)
 
 	pseudoSleep(customCB, time.Duration(29)*time.Second)
 	assert.Nil(t, succeed(customCB))
 	assert.Equal(t, StateClosed, customCB.State())
-	assert.Equal(t, Counts{11, 6, 5, 1, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{11, 6, 5, 1, 0}, customCB.counts.Counts)
 
 	pseudoSleep(customCB, time.Duration(1)*time.Second) // over Interval
 	assert.Nil(t, fail(customCB))
 	assert.Equal(t, StateClosed, customCB.State())
-	assert.Equal(t, Counts{1, 0, 1, 0, 1}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{1, 0, 1, 0, 1}, customCB.counts.Counts)
 
 	// StateClosed to StateOpen
 	assert.Nil(t, succeed(customCB))
 	assert.Nil(t, fail(customCB)) // failure ratio: 2/3 >= 0.6
 	assert.Equal(t, StateOpen, customCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts.Counts)
 	assert.False(t, customCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"cb", StateClosed, StateOpen}, stateChange)
 
@@ -283,16 +283,16 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Nil(t, succeed(customCB))
 	assert.Nil(t, succeed(customCB))
 	assert.Equal(t, StateHalfOpen, customCB.State())
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, customCB.counts.Counts)
 
 	// StateHalfOpen to StateClosed
 	ch := succeedLater(customCB, time.Duration(100)*time.Millisecond) // 3 consecutive successes
 	time.Sleep(time.Duration(50) * time.Millisecond)
-	assert.Equal(t, Counts{3, 2, 0, 2, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{3, 2, 0, 2, 0}, customCB.counts.Counts)
 	assert.Error(t, succeed(customCB)) // over MaxRequests
 	assert.Nil(t, <-ch)
 	assert.Equal(t, StateClosed, customCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts.Counts)
 	assert.False(t, customCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"cb", StateHalfOpen, StateClosed}, stateChange)
 }
@@ -305,64 +305,64 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 		assert.Nil(t, fail(rollingWindowCB))
 	}
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.windowCounts.ToCounts())
-	assert.Equal(t, 1, rollingWindowCB.windowCounts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.windowCounts.bucketCounts.Front().Value)
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.Counts)
+	assert.Equal(t, 1, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(3)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, Counts{11, 6, 5, 1, 0}, rollingWindowCB.windowCounts.ToCounts())
-	assert.Equal(t, 2, rollingWindowCB.windowCounts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.windowCounts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.windowCounts.bucketCounts.Front().Next().Value)
+	assert.Equal(t, Counts{11, 6, 5, 1, 0}, rollingWindowCB.counts.Counts)
+	assert.Equal(t, 2, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, 2, rollingWindowCB.windowCounts.bucketCounts.Len())
-	assert.Equal(t, Counts{12, 7, 5, 2, 0}, rollingWindowCB.windowCounts.ToCounts())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.windowCounts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.windowCounts.bucketCounts.Front().Next().Value)
+	assert.Equal(t, 2, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, Counts{12, 7, 5, 2, 0}, rollingWindowCB.counts.Counts)
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, Counts{13, 8, 5, 3, 0}, rollingWindowCB.windowCounts.ToCounts())
-	assert.Equal(t, 3, rollingWindowCB.windowCounts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.windowCounts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.windowCounts.bucketCounts.Front().Next().Value)
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.windowCounts.bucketCounts.Front().Next().Next().Value)
+	assert.Equal(t, Counts{13, 8, 5, 3, 0}, rollingWindowCB.counts.Counts)
+	assert.Equal(t, 3, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Next().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, fail(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, Counts{14, 8, 6, 0, 1}, rollingWindowCB.windowCounts.ToCounts())
-	assert.Equal(t, 4, rollingWindowCB.windowCounts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.windowCounts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.windowCounts.bucketCounts.Front().Next().Value)
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.windowCounts.bucketCounts.Front().Next().Next().Value)
-	assert.Equal(t, Counts{1, 0, 1, 0, 1}, rollingWindowCB.windowCounts.bucketCounts.Back().Value)
+	assert.Equal(t, Counts{14, 8, 6, 0, 1}, rollingWindowCB.counts.Counts)
+	assert.Equal(t, 4, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Next().Value)
+	assert.Equal(t, Counts{1, 0, 1, 0, 1}, rollingWindowCB.counts.bucketCounts.Back().Value)
 
 	// fill all the buckets
 	for i := 0; i < 6; i++ {
 		pseudoSleep(rollingWindowCB, time.Duration(3)*time.Second)
 		assert.Nil(t, succeed(rollingWindowCB))
 		assert.Nil(t, fail(rollingWindowCB))
-		assert.Equal(t, Counts{uint32(16 + 2*i), uint32(9 + i), uint32(7 + i), 0, 1}, rollingWindowCB.windowCounts.ToCounts())
+		assert.Equal(t, Counts{uint32(16 + 2*i), uint32(9 + i), uint32(7 + i), 0, 1}, rollingWindowCB.counts.Counts)
 	}
 
-	assert.Equal(t, 10, rollingWindowCB.windowCounts.bucketCounts.Len())
+	assert.Equal(t, 10, rollingWindowCB.counts.bucketCounts.Len())
 
 	// first bucket should be discarded
 	pseudoSleep(rollingWindowCB, time.Duration(3)*time.Second)
 	assert.Nil(t, fail(rollingWindowCB))
-	assert.Equal(t, 10, rollingWindowCB.windowCounts.bucketCounts.Len())
-	assert.Equal(t, Counts{17, 9, 8, 0, 2}, rollingWindowCB.windowCounts.ToCounts())
+	assert.Equal(t, 10, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, Counts{17, 9, 8, 0, 2}, rollingWindowCB.counts.Counts)
 
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, fail(rollingWindowCB))
-		assert.Equal(t, Counts{uint32(18 + i), 9, uint32(9 + i), 0, uint32(3 + i)}, rollingWindowCB.windowCounts.ToCounts())
+		assert.Equal(t, Counts{uint32(18 + i), 9, uint32(9 + i), 0, uint32(3 + i)}, rollingWindowCB.counts.Counts)
 	}
 
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
@@ -381,16 +381,16 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateHalfOpen, rollingWindowCB.State())
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.Counts)
 
 	// StateHalfOpen to StateClosed
 	ch := succeedLater(rollingWindowCB, time.Duration(100)*time.Millisecond) // 3 consecutive successes
 	time.Sleep(time.Duration(50) * time.Millisecond)
-	assert.Equal(t, Counts{3, 2, 0, 2, 0}, rollingWindowCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{3, 2, 0, 2, 0}, rollingWindowCB.counts.Counts)
 	assert.Error(t, succeed(rollingWindowCB)) // over MaxRequests
 	assert.Nil(t, <-ch)
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.counts.Counts)
 	assert.False(t, rollingWindowCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"rw", StateHalfOpen, StateClosed}, stateChange)
 }
@@ -404,27 +404,27 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	}
 
 	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{5, 0, 5, 0, 5}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{5, 0, 5, 0, 5}, tscb.cb.counts.Counts)
 
 	assert.Nil(t, succeed2Step(tscb))
 	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{6, 1, 5, 1, 0}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{6, 1, 5, 1, 0}, tscb.cb.counts.Counts)
 
 	assert.Nil(t, fail2Step(tscb))
 	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{7, 1, 6, 0, 1}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{7, 1, 6, 0, 1}, tscb.cb.counts.Counts)
 
 	// StateClosed to StateOpen
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, fail2Step(tscb)) // 6 consecutive failures
 	}
 	assert.Equal(t, StateOpen, tscb.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts.Counts)
 	assert.False(t, tscb.cb.expiry.IsZero())
 
 	assert.Error(t, succeed2Step(tscb))
 	assert.Error(t, fail2Step(tscb))
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts.Counts)
 
 	pseudoSleep(tscb.cb, time.Duration(59)*time.Second)
 	assert.Equal(t, StateOpen, tscb.State())
@@ -437,7 +437,7 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	// StateHalfOpen to StateOpen
 	assert.Nil(t, fail2Step(tscb))
 	assert.Equal(t, StateOpen, tscb.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts.Counts)
 	assert.False(t, tscb.cb.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
@@ -448,13 +448,13 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	// StateHalfOpen to StateClosed
 	assert.Nil(t, succeed2Step(tscb))
 	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.counts.Counts)
 	assert.True(t, tscb.cb.expiry.IsZero())
 }
 
 func TestPanicInRequest(t *testing.T) {
 	assert.Panics(t, func() { _ = causePanic(defaultCB) })
-	assert.Equal(t, Counts{1, 0, 1, 0, 1}, defaultCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{1, 0, 1, 0, 1}, defaultCB.counts.Counts)
 }
 
 func TestGeneration(t *testing.T) {
@@ -462,15 +462,15 @@ func TestGeneration(t *testing.T) {
 	assert.Nil(t, succeed(customCB))
 	ch := succeedLater(customCB, time.Duration(1500)*time.Millisecond)
 	time.Sleep(time.Duration(500) * time.Millisecond)
-	assert.Equal(t, Counts{2, 1, 0, 1, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{2, 1, 0, 1, 0}, customCB.counts.Counts)
 
 	time.Sleep(time.Duration(500) * time.Millisecond) // over Interval
 	assert.Equal(t, StateClosed, customCB.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts.Counts)
 
-	// the request from the previous generation has no effect on customCB.windowCounts.ToCounts()
+	// the request from the previous generation has no effect on customCB.windowCounts.Counts
 	assert.Nil(t, <-ch)
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts.Counts)
 }
 
 func TestCustomIsSuccessful(t *testing.T) {
@@ -483,9 +483,9 @@ func TestCustomIsSuccessful(t *testing.T) {
 		assert.Nil(t, fail(cb))
 	}
 	assert.Equal(t, StateClosed, cb.State())
-	assert.Equal(t, Counts{5, 5, 0, 5, 0}, cb.windowCounts.ToCounts())
+	assert.Equal(t, Counts{5, 5, 0, 5, 0}, cb.counts.Counts)
 
-	cb.windowCounts.clear()
+	cb.counts.clear()
 
 	cb.isSuccessful = func(err error) bool {
 		return err == nil
@@ -519,7 +519,7 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 		err := <-ch
 		assert.Nil(t, err)
 	}
-	assert.Equal(t, Counts{total, total, 0, total, 0}, customCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{total, total, 0, total, 0}, customCB.counts.Counts)
 }
 
 func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
@@ -544,5 +544,5 @@ func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
 		err := <-ch
 		assert.Nil(t, err)
 	}
-	assert.Equal(t, Counts{total, total, 0, total, 0}, rollingWindowCB.windowCounts.ToCounts())
+	assert.Equal(t, Counts{total, total, 0, total, 0}, rollingWindowCB.counts.Counts)
 }

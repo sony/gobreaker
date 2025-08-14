@@ -145,7 +145,7 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 
 	dcb.state = shared.State
 	dcb.generation = shared.Generation
-	dcb.windowCounts.FromCounts(shared.Counts, shared.BucketCounts)
+	dcb.counts.FromCounts(shared.Counts, shared.BucketCounts)
 	dcb.expiry = shared.Expiry
 }
 
@@ -169,8 +169,8 @@ func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 	state := SharedState{
 		State:        dcb.state,
 		Generation:   dcb.generation,
-		Counts:       dcb.windowCounts.Counts,
-		BucketCounts: toCountsArray(dcb.windowCounts.bucketCounts),
+		Counts:       dcb.counts.Counts,
+		BucketCounts: toCountsArray(dcb.counts.bucketCounts),
 		Expiry:       dcb.expiry,
 	}
 
