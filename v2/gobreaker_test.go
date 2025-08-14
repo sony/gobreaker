@@ -306,43 +306,43 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	}
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
 	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.Counts)
-	assert.Equal(t, 1, rollingWindowCB.counts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
+	assert.Equal(t, 1, rollingWindowCB.counts.buckets.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets.Front().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(3)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
 	assert.Equal(t, Counts{11, 6, 5, 1, 0}, rollingWindowCB.counts.Counts)
-	assert.Equal(t, 2, rollingWindowCB.counts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
+	assert.Equal(t, 2, rollingWindowCB.counts.buckets.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets.Front().Value)
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.buckets.Front().Next().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
-	assert.Equal(t, 2, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, 2, rollingWindowCB.counts.buckets.Len())
 	assert.Equal(t, Counts{12, 7, 5, 2, 0}, rollingWindowCB.counts.Counts)
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets.Front().Value)
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.buckets.Front().Next().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
 	assert.Equal(t, Counts{13, 8, 5, 3, 0}, rollingWindowCB.counts.Counts)
-	assert.Equal(t, 3, rollingWindowCB.counts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Next().Value)
+	assert.Equal(t, 3, rollingWindowCB.counts.buckets.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets.Front().Value)
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.buckets.Front().Next().Value)
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.buckets.Front().Next().Next().Value)
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, fail(rollingWindowCB))
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
 	assert.Equal(t, Counts{14, 8, 6, 0, 1}, rollingWindowCB.counts.Counts)
-	assert.Equal(t, 4, rollingWindowCB.counts.bucketCounts.Len())
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketCounts.Front().Value)
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Value)
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketCounts.Front().Next().Next().Value)
-	assert.Equal(t, Counts{1, 0, 1, 0, 1}, rollingWindowCB.counts.bucketCounts.Back().Value)
+	assert.Equal(t, 4, rollingWindowCB.counts.buckets.Len())
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets.Front().Value)
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.buckets.Front().Next().Value)
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.buckets.Front().Next().Next().Value)
+	assert.Equal(t, Counts{1, 0, 1, 0, 1}, rollingWindowCB.counts.buckets.Back().Value)
 
 	// fill all the buckets
 	for i := 0; i < 6; i++ {
@@ -352,12 +352,12 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 		assert.Equal(t, Counts{uint32(16 + 2*i), uint32(9 + i), uint32(7 + i), 0, 1}, rollingWindowCB.counts.Counts)
 	}
 
-	assert.Equal(t, 10, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, 10, rollingWindowCB.counts.buckets.Len())
 
 	// first bucket should be discarded
 	pseudoSleep(rollingWindowCB, time.Duration(3)*time.Second)
 	assert.Nil(t, fail(rollingWindowCB))
-	assert.Equal(t, 10, rollingWindowCB.counts.bucketCounts.Len())
+	assert.Equal(t, 10, rollingWindowCB.counts.buckets.Len())
 	assert.Equal(t, Counts{17, 9, 8, 0, 2}, rollingWindowCB.counts.Counts)
 
 	for i := 0; i < 5; i++ {

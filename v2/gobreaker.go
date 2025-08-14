@@ -55,29 +55,30 @@ type Counts struct {
 
 type windowCounts struct {
 	Counts
+
 	numBuckets       int64
-	bucketCounts     *list.List
+	buckets          *list.List
 	bucketGeneration int
 }
 
 func newWindowCounts(numBuckets int64) *windowCounts {
 	return &windowCounts{
-		numBuckets:   numBuckets,
-		bucketCounts: list.New(),
+		numBuckets: numBuckets,
+		buckets:    list.New(),
 	}
 }
 
 func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 	w.Counts = counts
 
-	w.bucketCounts.Init()
+	w.buckets.Init()
 	for _, buckCounts := range bucketCounts {
-		w.bucketCounts.PushBack(buckCounts)
+		w.buckets.PushBack(buckCounts)
 	}
 }
 
 func (w *windowCounts) onRequest() {
-	currentBucket := w.bucketCounts.Back()
+	currentBucket := w.buckets.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
 	currentBucketValue.Requests++
@@ -86,7 +87,7 @@ func (w *windowCounts) onRequest() {
 }
 
 func (w *windowCounts) onSuccess() {
-	currentBucket := w.bucketCounts.Back()
+	currentBucket := w.buckets.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
 	currentBucketValue.TotalSuccesses++
@@ -102,7 +103,7 @@ func (w *windowCounts) onSuccess() {
 }
 
 func (w *windowCounts) onFailure() {
-	currentBucket := w.bucketCounts.Back()
+	currentBucket := w.buckets.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
 	currentBucketValue.TotalFailures++
@@ -126,18 +127,18 @@ func (w *windowCounts) clear() {
 
 	w.bucketGeneration = 0
 
-	w.bucketCounts.Init()
-	w.bucketCounts.PushBack(Counts{})
+	w.buckets.Init()
+	w.buckets.PushBack(Counts{})
 }
 
 func (w *windowCounts) rotate() {
-	w.bucketCounts.PushBack(Counts{})
+	w.buckets.PushBack(Counts{})
 
-	if w.bucketCounts.Len() <= int(w.numBuckets) {
+	if w.buckets.Len() <= int(w.numBuckets) {
 		return
 	}
 
-	oldBucket := w.bucketCounts.Front()
+	oldBucket := w.buckets.Front()
 
 	if oldBucket != nil {
 		oldBucketCount, _ := oldBucket.Value.(Counts)
@@ -153,7 +154,7 @@ func (w *windowCounts) rotate() {
 		w.Requests -= oldBucketCount.Requests
 		w.TotalSuccesses -= oldBucketCount.TotalSuccesses
 		w.TotalFailures -= oldBucketCount.TotalFailures
-		w.bucketCounts.Remove(oldBucket)
+		w.buckets.Remove(oldBucket)
 	}
 }
 

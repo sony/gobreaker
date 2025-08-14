@@ -16,11 +16,11 @@ var (
 
 // SharedState represents the shared state of DistributedCircuitBreaker.
 type SharedState struct {
-	State        State     `json:"state"`
-	Generation   uint64    `json:"generation"`
-	Counts       Counts    `json:"counts"`
-	BucketCounts []Counts  `json:"bucketCounts"`
-	Expiry       time.Time `json:"expiry"`
+	State      State     `json:"state"`
+	Generation uint64    `json:"generation"`
+	Counts     Counts    `json:"counts"`
+	Buckets    []Counts  `json:"buckets"`
+	Expiry     time.Time `json:"expiry"`
 }
 
 // SharedDataStore stores the shared state of DistributedCircuitBreaker.
@@ -145,7 +145,7 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 
 	dcb.state = shared.State
 	dcb.generation = shared.Generation
-	dcb.counts.FromCounts(shared.Counts, shared.BucketCounts)
+	dcb.counts.FromCounts(shared.Counts, shared.Buckets)
 	dcb.expiry = shared.Expiry
 }
 
@@ -167,11 +167,11 @@ func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 	defer dcb.mutex.Unlock()
 
 	state := SharedState{
-		State:        dcb.state,
-		Generation:   dcb.generation,
-		Counts:       dcb.counts.Counts,
-		BucketCounts: toCountsArray(dcb.counts.bucketCounts),
-		Expiry:       dcb.expiry,
+		State:      dcb.state,
+		Generation: dcb.generation,
+		Counts:     dcb.counts.Counts,
+		Buckets:    toCountsArray(dcb.counts.buckets),
+		Expiry:     dcb.expiry,
 	}
 
 	return state
