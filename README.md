@@ -45,7 +45,7 @@ type Settings struct {
 
 - `Interval` is the cyclic period of the closed state
   for `CircuitBreaker` to clear the internal `Counts`, described later in this section.
-  If `Interval` is 0, `CircuitBreaker` doesn't clear the internal `Counts` during the closed state.
+  If `Interval` is 0, `CircuitBreaker` does not clear the internal `Counts` during the closed state.
 
 - `Timeout` is the period of the open state,
   after which the state of `CircuitBreaker` becomes half-open.

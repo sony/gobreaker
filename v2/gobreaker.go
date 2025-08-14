@@ -168,7 +168,7 @@ func (w *windowCounts) rotate() {
 //
 // Interval is the cyclic period of the closed state
 // for the CircuitBreaker to clear the internal Counts.
-// If Interval is less than or equal to 0, the CircuitBreaker doesn't clear internal Counts during the closed state.
+// If Interval is less than or equal to 0, the CircuitBreaker does not clear internal Counts during the closed state.
 //
 // BucketPeriod is the period of the bucket used in a rolling window strategy
 // the Interval will be adjusted to be a multiple of BucketPeriod.
@@ -357,7 +357,7 @@ func (tscb *TwoStepCircuitBreaker[T]) Counts() Counts {
 }
 
 // Allow checks if a new request can proceed. It returns a callback that should be used to
-// register the success or failure in a separate step. If the circuit breaker doesn't allow
+// register the success or failure in a separate step. If the circuit breaker does not allow
 // requests, it returns an error.
 func (tscb *TwoStepCircuitBreaker[T]) Allow() (done func(success bool), err error) {
 	generation, err := tscb.cb.beforeRequest()
