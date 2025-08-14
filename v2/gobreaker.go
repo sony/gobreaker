@@ -55,7 +55,6 @@ type Counts struct {
 
 type windowCounts struct {
 	Counts
-	mutex            sync.Mutex
 	numBuckets       int64
 	bucketCounts     *list.List
 	bucketGeneration int
@@ -78,9 +77,6 @@ func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 }
 
 func (w *windowCounts) onRequest() {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
 	currentBucket := w.bucketCounts.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
@@ -90,9 +86,6 @@ func (w *windowCounts) onRequest() {
 }
 
 func (w *windowCounts) onSuccess() {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
 	currentBucket := w.bucketCounts.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
@@ -109,9 +102,6 @@ func (w *windowCounts) onSuccess() {
 }
 
 func (w *windowCounts) onFailure() {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
 	currentBucket := w.bucketCounts.Back()
 	currentBucketValue, _ := currentBucket.Value.(Counts)
 
@@ -128,8 +118,6 @@ func (w *windowCounts) onFailure() {
 }
 
 func (w *windowCounts) clear() {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
 	w.Requests = 0
 	w.TotalSuccesses = 0
 	w.TotalFailures = 0
@@ -143,9 +131,6 @@ func (w *windowCounts) clear() {
 }
 
 func (w *windowCounts) rotate() {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
 	w.bucketCounts.PushBack(Counts{})
 
 	if w.bucketCounts.Len() <= int(w.numBuckets) {
