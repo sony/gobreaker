@@ -133,12 +133,24 @@ func (w *windowCounts) clear() {
 	}
 }
 
+// bucketAt returns the bucket at the given index, handling circular buffer indexing.
+// The index is relative to the current bucket, where 0 is the current bucket,
+// -1 is the previous bucket, -2 is two buckets ago, etc.
+func (w *windowCounts) bucketAt(index int) Counts {
+	if len(w.buckets) == 0 {
+		return Counts{}
+	}
+
+	bucketIndex := (int(w.current) + index + len(w.buckets)) % len(w.buckets)
+	return w.buckets[bucketIndex]
+}
+
 func (w *windowCounts) rotate() {
 	// Move to next bucket (circular)
 	w.current = (w.current + 1) % uint(len(w.buckets))
 
 	// Get the old bucket counts that we're about to overwrite
-	oldBucketCount := w.buckets[w.current]
+	oldBucketCount := w.bucketAt(0)
 
 	// Subtract old bucket counts from totals
 	if w.ConsecutiveSuccesses == w.TotalSuccesses {

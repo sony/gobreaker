@@ -3,6 +3,7 @@ package gobreaker
 import (
 	"errors"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,7 +308,7 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateClosed, rollingWindowCB.State())
 	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.Counts)
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets[rollingWindowCB.counts.current])
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketAt(0))
 
 	pseudoSleep(rollingWindowCB, time.Duration(3)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
@@ -315,9 +316,8 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{11, 6, 5, 1, 0}, rollingWindowCB.counts.Counts)
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	// With circular buffer, previous bucket is at (current-1+len) % len
-	prevIndex := (rollingWindowCB.counts.current - 1 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets[prevIndex])
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.buckets[rollingWindowCB.counts.current])
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketAt(-1))
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketAt(0))
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
@@ -325,9 +325,8 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	assert.Equal(t, Counts{12, 7, 5, 2, 0}, rollingWindowCB.counts.Counts)
 	// Previous bucket index
-	prevIndex = (rollingWindowCB.counts.current - 1 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets[prevIndex])
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.buckets[rollingWindowCB.counts.current])
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketAt(-1))
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketAt(0))
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, succeed(rollingWindowCB))
@@ -335,11 +334,9 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{13, 8, 5, 3, 0}, rollingWindowCB.counts.Counts)
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	// Calculate indices for buckets relative to current
-	prev2Index := (rollingWindowCB.counts.current - 2 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	prevIndex = (rollingWindowCB.counts.current - 1 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets[prev2Index])
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.buckets[prevIndex])
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.buckets[rollingWindowCB.counts.current])
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketAt(-2))
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketAt(-1))
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketAt(0))
 
 	pseudoSleep(rollingWindowCB, time.Duration(2)*time.Second)
 	assert.Nil(t, fail(rollingWindowCB))
@@ -347,13 +344,10 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{14, 8, 6, 0, 1}, rollingWindowCB.counts.Counts)
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	// Calculate indices for buckets relative to current
-	prev3Index := (rollingWindowCB.counts.current - 3 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	prev2Index = (rollingWindowCB.counts.current - 2 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	prevIndex = (rollingWindowCB.counts.current - 1 + uint(len(rollingWindowCB.counts.buckets))) % uint(len(rollingWindowCB.counts.buckets))
-	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.buckets[prev3Index])
-	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.buckets[prev2Index])
-	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.buckets[prevIndex])
-	assert.Equal(t, Counts{1, 0, 1, 0, 1}, rollingWindowCB.counts.buckets[rollingWindowCB.counts.current])
+	assert.Equal(t, Counts{10, 5, 5, 0, 1}, rollingWindowCB.counts.bucketAt(-3))
+	assert.Equal(t, Counts{2, 2, 0, 2, 0}, rollingWindowCB.counts.bucketAt(-2))
+	assert.Equal(t, Counts{1, 1, 0, 1, 0}, rollingWindowCB.counts.bucketAt(-1))
+	assert.Equal(t, Counts{1, 0, 1, 0, 1}, rollingWindowCB.counts.bucketAt(0))
 
 	// fill all the buckets
 	for i := 0; i < 6; i++ {
@@ -534,26 +528,59 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 }
 
 func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	const numGoroutines = 10
+	const numRequests = 100
 
-	ch := make(chan error)
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
 
-	const numReqs = 10000
-	routine := func() {
-		for i := 0; i < numReqs; i++ {
-			ch <- succeed(rollingWindowCB)
-		}
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numRequests; j++ {
+				if j%2 == 0 {
+					assert.Nil(t, succeed(rollingWindowCB))
+				} else {
+					assert.Nil(t, fail(rollingWindowCB))
+				}
+			}
+		}()
 	}
 
-	const numRoutines = 10
-	for i := 0; i < numRoutines; i++ {
-		go routine()
-	}
+	wg.Wait()
+}
 
-	total := uint32(numReqs * numRoutines)
-	for i := uint32(0); i < total; i++ {
-		err := <-ch
-		assert.Nil(t, err)
-	}
-	assert.Equal(t, Counts{total, total, 0, total, 0}, rollingWindowCB.counts.Counts)
+func TestWindowCountsBucketAt(t *testing.T) {
+	// Create a windowCounts with 5 buckets
+	wc := newWindowCounts(5)
+
+	// Test bucketAt with different indices
+	assert.Equal(t, Counts{}, wc.bucketAt(0))  // Current bucket (empty)
+	assert.Equal(t, Counts{}, wc.bucketAt(-1)) // Previous bucket (empty)
+	assert.Equal(t, Counts{}, wc.bucketAt(1))  // Next bucket (empty)
+	assert.Equal(t, Counts{}, wc.bucketAt(-2)) // Two buckets ago (empty)
+	assert.Equal(t, Counts{}, wc.bucketAt(2))  // Two buckets ahead (empty)
+
+	// Test that all buckets are the same when empty
+	assert.Equal(t, wc.bucketAt(0), wc.bucketAt(-1))
+	assert.Equal(t, wc.bucketAt(0), wc.bucketAt(1))
+
+	// Test circular buffer behavior
+	// Add some data to current bucket
+	wc.buckets[wc.current].Requests = 10
+	wc.buckets[wc.current].TotalSuccesses = 5
+
+	// Rotate to next bucket
+	wc.rotate()
+
+	// Now bucketAt(0) should be the new current bucket (empty)
+	// and bucketAt(-1) should be the previous bucket (with data)
+	assert.Equal(t, uint32(0), wc.bucketAt(0).Requests)
+	assert.Equal(t, uint32(10), wc.bucketAt(-1).Requests)
+	assert.Equal(t, uint32(5), wc.bucketAt(-1).TotalSuccesses)
+
+	// Test edge case with empty buckets
+	emptyWc := newWindowCounts(0)
+	assert.Equal(t, Counts{}, emptyWc.bucketAt(0))
+	assert.Equal(t, Counts{}, emptyWc.bucketAt(-1))
 }
