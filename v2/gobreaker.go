@@ -76,86 +76,89 @@ func (c *Counts) clear() {
 	c.ConsecutiveFailures = 0
 }
 
-type windowCounts struct {
+type rollingCounts struct {
 	Counts
 
 	age     uint64
 	buckets []Counts
 }
 
-func newWindowCounts(numBuckets uint64) *windowCounts {
-	return &windowCounts{
+func newRollingCounts(numBuckets int64) *rollingCounts {
+	if numBuckets < 0 {
+		numBuckets = 0
+	}
+	return &rollingCounts{
 		buckets: make([]Counts, numBuckets),
 	}
 }
 
-func (w *windowCounts) index(age uint64) uint64 {
-	if len(w.buckets) == 0 {
+func (rc *rollingCounts) index(age uint64) uint64 {
+	if len(rc.buckets) == 0 {
 		return 0
 	}
-	return w.age % uint64(len(w.buckets))
+	return age % uint64(len(rc.buckets))
 }
 
-func (w *windowCounts) current() uint64 {
-	return w.index(w.age)
+func (rc *rollingCounts) current() uint64 {
+	return rc.index(rc.age)
 }
 
-func (w *windowCounts) onRequest() {
-	w.Counts.onRequest()
-	w.buckets[w.current()].onRequest()
+func (rc *rollingCounts) onRequest() {
+	rc.Counts.onRequest()
+	rc.buckets[rc.current()].onRequest()
 }
 
-func (w *windowCounts) onSuccess() {
-	w.Counts.onSuccess()
-	w.buckets[w.current()].onSuccess()
+func (rc *rollingCounts) onSuccess() {
+	rc.Counts.onSuccess()
+	rc.buckets[rc.current()].onSuccess()
 }
 
-func (w *windowCounts) onFailure() {
-	w.Counts.onFailure()
-	w.buckets[w.current()].onFailure()
+func (rc *rollingCounts) onFailure() {
+	rc.Counts.onFailure()
+	rc.buckets[rc.current()].onFailure()
 }
 
-func (w *windowCounts) clear() {
-	w.Counts.clear()
+func (rc *rollingCounts) clear() {
+	rc.Counts.clear()
 
-	w.age = 0
+	rc.age = 0
 
-	for i := range w.buckets {
-		w.buckets[i].clear()
+	for i := range rc.buckets {
+		rc.buckets[i].clear()
 	}
 }
 
-func (w *windowCounts) rotate() {
+func (rc *rollingCounts) rotate() {
 	// Increment age to move to next bucket
-	w.age++
+	rc.age++
 
 	// Get the old bucket counts that we're about to overwrite
-	oldBucketCount := w.bucketAt(0)
+	oldBucketCount := rc.bucketAt(0)
 
 	// Subtract old bucket counts from totals
-	if w.ConsecutiveSuccesses == w.TotalSuccesses {
-		w.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
+	if rc.ConsecutiveSuccesses == rc.TotalSuccesses {
+		rc.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
 	}
 
-	if w.ConsecutiveFailures == w.TotalFailures {
-		w.ConsecutiveFailures -= oldBucketCount.ConsecutiveFailures
+	if rc.ConsecutiveFailures == rc.TotalFailures {
+		rc.ConsecutiveFailures -= oldBucketCount.ConsecutiveFailures
 	}
 
-	w.Requests -= oldBucketCount.Requests
-	w.TotalSuccesses -= oldBucketCount.TotalSuccesses
-	w.TotalFailures -= oldBucketCount.TotalFailures
+	rc.Requests -= oldBucketCount.Requests
+	rc.TotalSuccesses -= oldBucketCount.TotalSuccesses
+	rc.TotalFailures -= oldBucketCount.TotalFailures
 
 	// Clear the new current bucket
-	w.buckets[w.current()].clear()
+	rc.buckets[rc.current()].clear()
 }
 
-func (w *windowCounts) bucketAt(index int) Counts {
-	if len(w.buckets) == 0 {
+func (rc *rollingCounts) bucketAt(index int) Counts {
+	if len(rc.buckets) == 0 {
 		return Counts{}
 	}
 
-	bucketIndex := (int(w.current()) + index + len(w.buckets)) % len(w.buckets)
-	return w.buckets[bucketIndex]
+	bucketIndex := (rc.current() + uint64(index) + uint64(len(rc.buckets))) % uint64(len(rc.buckets))
+	return rc.buckets[bucketIndex]
 }
 
 // Settings configures CircuitBreaker:
@@ -215,7 +218,7 @@ type CircuitBreaker[T any] struct {
 	mutex      sync.Mutex
 	state      State
 	generation uint64
-	counts     *windowCounts
+	counts     *rollingCounts
 	expiry     time.Time
 }
 
@@ -239,7 +242,7 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.maxRequests = st.MaxRequests
 	}
 
-	var numBuckets uint64
+	var numBuckets int64
 	if st.Interval <= 0 {
 		cb.interval = defaultInterval
 		cb.bucketPeriod = cb.interval
@@ -251,11 +254,11 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 	} else {
 		cb.interval = (st.Interval + st.BucketPeriod - 1) / st.BucketPeriod * st.BucketPeriod
 		cb.bucketPeriod = st.BucketPeriod
-		numBuckets = uint64(cb.interval / cb.bucketPeriod)
+		numBuckets = int64(cb.interval / cb.bucketPeriod)
 		cb.interval = cb.bucketPeriod // to be removed later
 	}
 
-	cb.counts = newWindowCounts(numBuckets)
+	cb.counts = newRollingCounts(numBuckets)
 
 	if st.Timeout <= 0 {
 		cb.timeout = defaultTimeout
