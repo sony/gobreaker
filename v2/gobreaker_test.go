@@ -567,8 +567,8 @@ func TestWindowCountsBucketAt(t *testing.T) {
 
 	// Test circular buffer behavior
 	// Add some data to current bucket
-	wc.buckets[wc.current].Requests = 10
-	wc.buckets[wc.current].TotalSuccesses = 5
+	wc.buckets[wc.current()].Requests = 10
+	wc.buckets[wc.current()].TotalSuccesses = 5
 
 	// Rotate to next bucket
 	wc.rotate()

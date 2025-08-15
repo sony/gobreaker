@@ -64,9 +64,8 @@ func (c *Counts) clear() {
 type windowCounts struct {
 	Counts
 
-	buckets          []Counts
-	current          uint
-	bucketGeneration int
+	buckets []Counts
+	age     uint64
 }
 
 func newWindowCounts(numBuckets int64) *windowCounts {
@@ -74,8 +73,15 @@ func newWindowCounts(numBuckets int64) *windowCounts {
 
 	return &windowCounts{
 		buckets: buckets,
-		current: 0,
 	}
+}
+
+// current returns the current bucket position based on age
+func (w *windowCounts) current() uint {
+	if len(w.buckets) == 0 {
+		return 0
+	}
+	return uint(w.age % uint64(len(w.buckets)))
 }
 
 func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
@@ -92,41 +98,40 @@ func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
 		w.buckets = make([]Counts, len(bucketCounts))
 		copy(w.buckets, bucketCounts)
 	}
-	w.current = 0
+	w.age = 0
 }
 
 func (w *windowCounts) onRequest() {
-	w.buckets[w.current].Requests++
+	w.buckets[w.current()].Requests++
 	w.Requests++
 }
 
 func (w *windowCounts) onSuccess() {
-	w.buckets[w.current].TotalSuccesses++
+	w.buckets[w.current()].TotalSuccesses++
 	w.TotalSuccesses++
 
-	w.buckets[w.current].ConsecutiveSuccesses++
+	w.buckets[w.current()].ConsecutiveSuccesses++
 	w.ConsecutiveSuccesses++
 
-	w.buckets[w.current].ConsecutiveFailures = 0
+	w.buckets[w.current()].ConsecutiveFailures = 0
 	w.ConsecutiveFailures = 0
 }
 
 func (w *windowCounts) onFailure() {
-	w.buckets[w.current].TotalFailures++
+	w.buckets[w.current()].TotalFailures++
 	w.TotalFailures++
 
-	w.buckets[w.current].ConsecutiveFailures++
+	w.buckets[w.current()].ConsecutiveFailures++
 	w.ConsecutiveFailures++
 
-	w.buckets[w.current].ConsecutiveSuccesses = 0
+	w.buckets[w.current()].ConsecutiveSuccesses = 0
 	w.ConsecutiveSuccesses = 0
 }
 
 func (w *windowCounts) clear() {
 	w.Counts.clear()
 
-	w.bucketGeneration = 0
-	w.current = 0
+	w.age = 0
 
 	for i := range w.buckets {
 		w.buckets[i].clear()
@@ -141,13 +146,13 @@ func (w *windowCounts) bucketAt(index int) Counts {
 		return Counts{}
 	}
 
-	bucketIndex := (int(w.current) + index + len(w.buckets)) % len(w.buckets)
+	bucketIndex := (int(w.current()) + index + len(w.buckets)) % len(w.buckets)
 	return w.buckets[bucketIndex]
 }
 
 func (w *windowCounts) rotate() {
-	// Move to next bucket (circular)
-	w.current = (w.current + 1) % uint(len(w.buckets))
+	// Increment age to move to next bucket
+	w.age++
 
 	// Get the old bucket counts that we're about to overwrite
 	oldBucketCount := w.bucketAt(0)
@@ -166,7 +171,7 @@ func (w *windowCounts) rotate() {
 	w.TotalFailures -= oldBucketCount.TotalFailures
 
 	// Clear the new current bucket
-	w.buckets[w.current].clear()
+	w.buckets[w.current()].clear()
 }
 
 // Settings configures CircuitBreaker:
@@ -492,10 +497,9 @@ func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 }
 
 func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
-	cb.counts.bucketGeneration++
-	if cb.counts.bucketGeneration == len(cb.counts.buckets) {
+	cb.counts.rotate()
+	if cb.counts.age == uint64(len(cb.counts.buckets)) {
 		cb.generation++
 	}
-	cb.counts.rotate()
 	cb.updateExpiry(lastExpiry)
 }
