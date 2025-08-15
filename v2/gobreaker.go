@@ -153,11 +153,17 @@ func (rc *rollingCounts) rotate() {
 }
 
 func (rc *rollingCounts) bucketAt(index int) Counts {
-	if len(rc.buckets) == 0 {
+	bucketLen := len(rc.buckets)
+	if bucketLen == 0 {
 		return Counts{}
 	}
 
-	bucketIndex := (rc.current() + uint64(index) + uint64(len(rc.buckets))) % uint64(len(rc.buckets))
+	index += bucketLen
+	if index < 0 {
+		return Counts{}
+	}
+
+	bucketIndex := (rc.current() + uint64(index)) % uint64(bucketLen)
 	return rc.buckets[bucketIndex]
 }
 
