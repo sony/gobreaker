@@ -108,14 +108,14 @@ func (rc *rollingCounts) onRequest() {
 	rc.buckets[rc.current()].onRequest()
 }
 
-func (rc *rollingCounts) onSuccess() {
+func (rc *rollingCounts) onSuccess(age uint64) {
 	rc.Counts.onSuccess()
-	rc.buckets[rc.current()].onSuccess()
+	rc.buckets[rc.index(age)].onSuccess()
 }
 
-func (rc *rollingCounts) onFailure() {
+func (rc *rollingCounts) onFailure(age uint64) {
 	rc.Counts.onFailure()
-	rc.buckets[rc.current()].onFailure()
+	rc.buckets[rc.index(age)].onFailure()
 }
 
 func (rc *rollingCounts) clear() {
@@ -312,7 +312,7 @@ func (cb *CircuitBreaker[T]) State() State {
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, _ := cb.currentState(now)
+	state, _, _ := cb.currentState(now)
 	return state
 }
 
@@ -330,7 +330,7 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
 func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
-	generation, err := cb.beforeRequest()
+	generation, age, err := cb.beforeRequest()
 	if err != nil {
 		var defaultValue T
 		return defaultValue, err
@@ -339,13 +339,13 @@ func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, false)
+			cb.afterRequest(generation, age, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, cb.isSuccessful(err))
+	cb.afterRequest(generation, age, cb.isSuccessful(err))
 	return result, err
 }
 
@@ -368,66 +368,66 @@ func (tscb *TwoStepCircuitBreaker[T]) Counts() Counts {
 // register the success or failure in a separate step. If the circuit breaker does not allow
 // requests, it returns an error.
 func (tscb *TwoStepCircuitBreaker[T]) Allow() (done func(success bool), err error) {
-	generation, err := tscb.cb.beforeRequest()
+	generation, age, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
 	return func(success bool) {
-		tscb.cb.afterRequest(generation, success)
+		tscb.cb.afterRequest(generation, age, success)
 	}, nil
 }
 
-func (cb *CircuitBreaker[T]) beforeRequest() (uint64, error) {
+func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, generation := cb.currentState(now)
+	state, generation, age := cb.currentState(now)
 
 	if state == StateOpen {
-		return generation, ErrOpenState
+		return generation, age, ErrOpenState
 	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, ErrTooManyRequests
+		return generation, age, ErrTooManyRequests
 	}
 
 	cb.counts.onRequest()
-	return generation, nil
+	return generation, age, nil
 }
 
-func (cb *CircuitBreaker[T]) afterRequest(before uint64, success bool) {
+func (cb *CircuitBreaker[T]) afterRequest(before uint64, age uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, generation := cb.currentState(now)
+	state, generation, age := cb.currentState(now)
 	if generation != before {
 		return
 	}
 
 	if success {
-		cb.onSuccess(state, now)
+		cb.onSuccess(state, age, now)
 	} else {
-		cb.onFailure(state, now)
+		cb.onFailure(state, age, now)
 	}
 }
 
-func (cb *CircuitBreaker[T]) onSuccess(state State, now time.Time) {
+func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onSuccess()
+		cb.counts.onSuccess(age)
 	case StateHalfOpen:
-		cb.counts.onSuccess()
+		cb.counts.onSuccess(age)
 		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
 			cb.setState(StateClosed, now)
 		}
 	}
 }
 
-func (cb *CircuitBreaker[T]) onFailure(state State, now time.Time) {
+func (cb *CircuitBreaker[T]) onFailure(state State, age uint64, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onFailure()
+		cb.counts.onFailure(age)
 		if cb.readyToTrip(cb.counts.Counts) {
 			cb.setState(StateOpen, now)
 		}
@@ -436,7 +436,7 @@ func (cb *CircuitBreaker[T]) onFailure(state State, now time.Time) {
 	}
 }
 
-func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64) {
+func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64) {
 	switch cb.state {
 	case StateClosed:
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
@@ -447,7 +447,7 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64) {
 			cb.setState(StateHalfOpen, now)
 		}
 	}
-	return cb.state, cb.generation
+	return cb.state, cb.generation, cb.counts.age
 }
 
 func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
