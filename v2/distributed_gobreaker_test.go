@@ -57,8 +57,10 @@ func dcbPseudoSleep(dcb *DistributedCircuitBreaker[any], period time.Duration) {
 	state.Expiry = state.Expiry.Add(-period)
 	// Reset counts if the interval has passed
 	if time.Now().After(state.Expiry) {
-		state.Counts = Counts{}
-		state.Buckets = []Counts{}
+		state.Counts.clear()
+		for i := range state.Buckets {
+			state.Buckets[i].clear()
+		}
 	}
 
 	err = dcb.setSharedState(state)

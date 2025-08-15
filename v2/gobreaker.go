@@ -52,6 +52,15 @@ type Counts struct {
 	ConsecutiveFailures  uint32
 }
 
+// clear resets all counters to zero.
+func (c *Counts) clear() {
+	c.Requests = 0
+	c.TotalSuccesses = 0
+	c.TotalFailures = 0
+	c.ConsecutiveSuccesses = 0
+	c.ConsecutiveFailures = 0
+}
+
 type windowCounts struct {
 	Counts
 
@@ -114,17 +123,13 @@ func (w *windowCounts) onFailure() {
 }
 
 func (w *windowCounts) clear() {
-	w.Requests = 0
-	w.TotalSuccesses = 0
-	w.TotalFailures = 0
-	w.ConsecutiveSuccesses = 0
-	w.ConsecutiveFailures = 0
+	w.Counts.clear()
 
 	w.bucketGeneration = 0
 	w.current = 0
 
 	for i := range w.buckets {
-		w.buckets[i] = Counts{}
+		w.buckets[i].clear()
 	}
 }
 
@@ -149,7 +154,7 @@ func (w *windowCounts) rotate() {
 	w.TotalFailures -= oldBucketCount.TotalFailures
 
 	// Clear the new current bucket
-	w.buckets[w.current] = Counts{}
+	w.buckets[w.current].clear()
 }
 
 // Settings configures CircuitBreaker:
