@@ -146,8 +146,8 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 	dcb.state = shared.State
 	dcb.generation = shared.Generation
 	dcb.counts.Counts = shared.Counts
-	dcb.counts.buckets = copyBuckets(shared.Buckets)
 	dcb.counts.age = shared.Age
+	dcb.counts.buckets = copyBuckets(shared.Buckets)
 	dcb.expiry = shared.Expiry
 }
 

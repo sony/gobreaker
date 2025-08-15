@@ -52,7 +52,22 @@ type Counts struct {
 	ConsecutiveFailures  uint32
 }
 
-// clear resets all counters to zero.
+func (c *Counts) onRequest() {
+	c.Requests++
+}
+
+func (c *Counts) onSuccess() {
+	c.TotalSuccesses++
+	c.ConsecutiveSuccesses++
+	c.ConsecutiveFailures = 0
+}
+
+func (c *Counts) onFailure() {
+	c.TotalFailures++
+	c.ConsecutiveFailures++
+	c.ConsecutiveSuccesses = 0
+}
+
 func (c *Counts) clear() {
 	c.Requests = 0
 	c.TotalSuccesses = 0
@@ -64,51 +79,40 @@ func (c *Counts) clear() {
 type windowCounts struct {
 	Counts
 
-	buckets []Counts
 	age     uint64
+	buckets []Counts
 }
 
-func newWindowCounts(numBuckets int64) *windowCounts {
-	buckets := make([]Counts, numBuckets)
-
+func newWindowCounts(numBuckets uint64) *windowCounts {
 	return &windowCounts{
-		buckets: buckets,
+		buckets: make([]Counts, numBuckets),
 	}
 }
 
-// current returns the current bucket position based on age
-func (w *windowCounts) current() uint {
+func (w *windowCounts) index(age uint64) uint64 {
 	if len(w.buckets) == 0 {
 		return 0
 	}
-	return uint(w.age % uint64(len(w.buckets)))
+	return w.age % uint64(len(w.buckets))
+}
+
+func (w *windowCounts) current() uint64 {
+	return w.index(w.age)
 }
 
 func (w *windowCounts) onRequest() {
-	w.buckets[w.current()].Requests++
-	w.Requests++
+	w.Counts.onRequest()
+	w.buckets[w.current()].onRequest()
 }
 
 func (w *windowCounts) onSuccess() {
-	w.buckets[w.current()].TotalSuccesses++
-	w.TotalSuccesses++
-
-	w.buckets[w.current()].ConsecutiveSuccesses++
-	w.ConsecutiveSuccesses++
-
-	w.buckets[w.current()].ConsecutiveFailures = 0
-	w.ConsecutiveFailures = 0
+	w.Counts.onSuccess()
+	w.buckets[w.current()].onSuccess()
 }
 
 func (w *windowCounts) onFailure() {
-	w.buckets[w.current()].TotalFailures++
-	w.TotalFailures++
-
-	w.buckets[w.current()].ConsecutiveFailures++
-	w.ConsecutiveFailures++
-
-	w.buckets[w.current()].ConsecutiveSuccesses = 0
-	w.ConsecutiveSuccesses = 0
+	w.Counts.onFailure()
+	w.buckets[w.current()].onFailure()
 }
 
 func (w *windowCounts) clear() {
@@ -119,18 +123,6 @@ func (w *windowCounts) clear() {
 	for i := range w.buckets {
 		w.buckets[i].clear()
 	}
-}
-
-// bucketAt returns the bucket at the given index, handling circular buffer indexing.
-// The index is relative to the current bucket, where 0 is the current bucket,
-// -1 is the previous bucket, -2 is two buckets ago, etc.
-func (w *windowCounts) bucketAt(index int) Counts {
-	if len(w.buckets) == 0 {
-		return Counts{}
-	}
-
-	bucketIndex := (int(w.current()) + index + len(w.buckets)) % len(w.buckets)
-	return w.buckets[bucketIndex]
 }
 
 func (w *windowCounts) rotate() {
@@ -155,6 +147,15 @@ func (w *windowCounts) rotate() {
 
 	// Clear the new current bucket
 	w.buckets[w.current()].clear()
+}
+
+func (w *windowCounts) bucketAt(index int) Counts {
+	if len(w.buckets) == 0 {
+		return Counts{}
+	}
+
+	bucketIndex := (int(w.current()) + index + len(w.buckets)) % len(w.buckets)
+	return w.buckets[bucketIndex]
 }
 
 // Settings configures CircuitBreaker:
@@ -205,6 +206,7 @@ type CircuitBreaker[T any] struct {
 	name          string
 	maxRequests   uint32
 	interval      time.Duration
+	bucketPeriod  time.Duration
 	timeout       time.Duration
 	readyToTrip   func(counts Counts) bool
 	isSuccessful  func(err error) bool
@@ -237,16 +239,20 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.maxRequests = st.MaxRequests
 	}
 
-	var numBuckets int64 = 1
+	var numBuckets uint64
 	if st.Interval <= 0 {
 		cb.interval = defaultInterval
+		cb.bucketPeriod = cb.interval
+		numBuckets = 1
+	} else if st.BucketPeriod <= 0 || st.BucketPeriod == st.Interval {
+		cb.interval = st.Interval
+		cb.bucketPeriod = cb.interval
+		numBuckets = 1
 	} else {
-		if st.BucketPeriod <= 0 || st.BucketPeriod == st.Interval {
-			cb.interval = st.Interval
-		} else {
-			cb.interval = st.BucketPeriod
-			numBuckets = st.Interval.Milliseconds() / st.BucketPeriod.Milliseconds()
-		}
+		cb.interval = (st.Interval + st.BucketPeriod - 1) / st.BucketPeriod * st.BucketPeriod
+		cb.bucketPeriod = st.BucketPeriod
+		numBuckets = uint64(cb.interval / cb.bucketPeriod)
+		cb.interval = cb.bucketPeriod // to be removed later
 	}
 
 	cb.counts = newWindowCounts(numBuckets)
