@@ -17,6 +17,7 @@ var (
 type SharedState struct {
 	State      State     `json:"state"`
 	Generation uint64    `json:"generation"`
+	Age        uint64    `json:"age"`
 	Counts     Counts    `json:"counts"`
 	Buckets    []Counts  `json:"buckets"`
 	Expiry     time.Time `json:"expiry"`
@@ -144,15 +145,17 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 
 	dcb.state = shared.State
 	dcb.generation = shared.Generation
-	dcb.counts.FromCounts(shared.Counts, shared.Buckets)
+	dcb.counts.Counts = shared.Counts
+	dcb.counts.buckets = copyBuckets(shared.Buckets)
+	dcb.counts.age = shared.Age
 	dcb.expiry = shared.Expiry
 }
 
-func toCountsArray(buckets []Counts) []Counts {
+func copyBuckets(buckets []Counts) []Counts {
 	if buckets == nil {
 		return []Counts{}
 	}
-	// Return a copy of the slice
+
 	counts := make([]Counts, len(buckets))
 	copy(counts, buckets)
 	return counts
@@ -165,8 +168,9 @@ func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 	state := SharedState{
 		State:      dcb.state,
 		Generation: dcb.generation,
+		Age:        dcb.counts.age,
 		Counts:     dcb.counts.Counts,
-		Buckets:    toCountsArray(dcb.counts.buckets),
+		Buckets:    copyBuckets(dcb.counts.buckets),
 		Expiry:     dcb.expiry,
 	}
 

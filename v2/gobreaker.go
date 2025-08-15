@@ -84,23 +84,6 @@ func (w *windowCounts) current() uint {
 	return uint(w.age % uint64(len(w.buckets)))
 }
 
-func (w *windowCounts) FromCounts(counts Counts, bucketCounts []Counts) {
-	w.Counts = counts
-
-	// Preserve the original number of buckets if bucketCounts is shorter or empty
-	originalLen := len(w.buckets)
-	if len(bucketCounts) < originalLen {
-		// Reset to original size with empty buckets
-		w.buckets = make([]Counts, originalLen)
-		// Copy what we have
-		copy(w.buckets, bucketCounts)
-	} else {
-		w.buckets = make([]Counts, len(bucketCounts))
-		copy(w.buckets, bucketCounts)
-	}
-	w.age = 0
-}
-
 func (w *windowCounts) onRequest() {
 	w.buckets[w.current()].Requests++
 	w.Requests++
