@@ -570,7 +570,7 @@ func TestWindowCountsBucketAt(t *testing.T) {
 	rc.buckets[rc.current()].TotalSuccesses = 5
 
 	// Rotate to next bucket
-	rc.rotate()
+	rc.roll()
 
 	// Now bucketAt(0) should be the new current bucket (empty)
 	// and bucketAt(-1) should be the previous bucket (with data)

@@ -128,28 +128,22 @@ func (rc *rollingCounts) clear() {
 	}
 }
 
-func (rc *rollingCounts) rotate() {
-	// Increment age to move to next bucket
+func (rc *rollingCounts) roll() {
 	rc.age++
+	current := rc.current()
 
-	// Get the old bucket counts that we're about to overwrite
-	oldBucketCount := rc.bucketAt(0)
-
-	// Subtract old bucket counts from totals
+	oldest := rc.buckets[current]
 	if rc.ConsecutiveSuccesses == rc.TotalSuccesses {
-		rc.ConsecutiveSuccesses -= oldBucketCount.ConsecutiveSuccesses
+		rc.ConsecutiveSuccesses -= oldest.ConsecutiveSuccesses
 	}
-
 	if rc.ConsecutiveFailures == rc.TotalFailures {
-		rc.ConsecutiveFailures -= oldBucketCount.ConsecutiveFailures
+		rc.ConsecutiveFailures -= oldest.ConsecutiveFailures
 	}
+	rc.Requests -= oldest.Requests
+	rc.TotalSuccesses -= oldest.TotalSuccesses
+	rc.TotalFailures -= oldest.TotalFailures
 
-	rc.Requests -= oldBucketCount.Requests
-	rc.TotalSuccesses -= oldBucketCount.TotalSuccesses
-	rc.TotalFailures -= oldBucketCount.TotalFailures
-
-	// Clear the new current bucket
-	rc.buckets[rc.current()].clear()
+	rc.buckets[current].clear()
 }
 
 func (rc *rollingCounts) bucketAt(index int) Counts {
@@ -495,7 +489,7 @@ func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
 }
 
 func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
-	cb.counts.rotate()
+	cb.counts.roll()
 	if cb.counts.age == uint64(len(cb.counts.buckets)) {
 		cb.generation++
 	}
