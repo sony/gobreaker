@@ -470,10 +470,11 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 
 func (cb *CircuitBreaker[T]) age(now time.Time) uint64 {
 	elapsed := now.Sub(cb.start)
-	if elapsed < 0 {
+	age := int64(elapsed / cb.bucketPeriod)
+	if age < 0 {
 		return 0
 	}
-	return uint64(elapsed / cb.bucketPeriod)
+	return uint64(age)
 }
 
 func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
