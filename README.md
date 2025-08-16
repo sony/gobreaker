@@ -30,6 +30,7 @@ type Settings struct {
 	Name          string
 	MaxRequests   uint32
 	Interval      time.Duration
+	BucketPeriod  time.Duration
 	Timeout       time.Duration
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
@@ -46,6 +47,11 @@ type Settings struct {
 - `Interval` is the cyclic period of the closed state
   for `CircuitBreaker` to clear the internal `Counts`, described later in this section.
   If `Interval` is 0, `CircuitBreaker` does not clear the internal `Counts` during the closed state.
+
+- `BucketPeriod` defines the time duration for each bucket in the rolling window strategy.
+  The internal `Counts` will be updated and reset gradually for each bucket.
+  `Interval` will be automatically adjusted to be a multiple of `BucketPeriod`.
+  If `BucketPeriod` is less than or equal to 0, `CircuitBreaker` will use a fixed window strategy instead.
 
 - `Timeout` is the period of the open state,
   after which the state of `CircuitBreaker` becomes half-open.

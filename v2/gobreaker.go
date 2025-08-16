@@ -188,9 +188,9 @@ func (rc *rollingCounts) bucketAt(index int) Counts {
 		return Counts{}
 	}
 
-	idx := index % bucketLen
+	idx := (index%bucketLen + bucketLen) % bucketLen
 	if idx < 0 {
-		idx += bucketLen
+		return Counts{}
 	}
 
 	bucketIndex := (rc.current() + uint64(idx)) % uint64(bucketLen)
@@ -209,10 +209,10 @@ func (rc *rollingCounts) bucketAt(index int) Counts {
 // for the CircuitBreaker to clear the internal Counts.
 // If Interval is less than or equal to 0, the CircuitBreaker does not clear internal Counts during the closed state.
 //
-// BucketPeriod is the period of the bucket used in a rolling window strategy
-// the Interval will be adjusted to be a multiple of BucketPeriod.
-// If BucketPeriod is less than or equal to 0, or equal to Interval, the CircuitBreaker
-// will use a fixed window strategy.
+// BucketPeriod defines the time duration for each bucket in the rolling window strategy.
+// The internal Counts will be updated and reset gradually for each bucket.
+// Interval will be automatically adjusted to be a multiple of BucketPeriod.
+// If BucketPeriod is less than or equal to 0, the CircuitBreaker will use a fixed window strategy instead.
 //
 // Timeout is the period of the open state,
 // after which the state of the CircuitBreaker becomes half-open.
