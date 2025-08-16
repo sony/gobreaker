@@ -156,7 +156,7 @@ func (rc *rollingCounts) grow(age uint64) {
 		rc.clear()
 		rc.age = age
 	} else if diff > 0 {
-		for i := 0; i < int(diff); i++ {
+		for range diff {
 			rc.roll()
 		}
 	}
@@ -458,7 +458,13 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
 			cb.toNewGeneration(now)
 		} else if len(cb.counts.buckets) >= 2 {
-			age := uint64(now.Sub(cb.start) / cb.bucketPeriod)
+			elapsed := now.Sub(cb.start)
+			var age uint64
+			if elapsed < 0 {
+				age = 0
+			} else {
+				age = uint64(elapsed / cb.bucketPeriod)
+			}
 			cb.counts.grow(age)
 		}
 	case StateOpen:
