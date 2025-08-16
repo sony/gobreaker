@@ -75,13 +75,6 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 	return dcb
 }
 
-func tearDownDCB(dcb *DistributedCircuitBreaker[any]) {
-	if dcb != nil {
-		// For mock store, no cleanup needed
-		// For Redis store, this would call store.Close()
-	}
-}
-
 func dcbPseudoSleep(dcb *DistributedCircuitBreaker[any], period time.Duration) {
 	state, err := dcb.getSharedState()
 	if err != nil {
@@ -124,7 +117,6 @@ func assertState(t *testing.T, dcb *DistributedCircuitBreaker[any], expected Sta
 
 func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	assert.Equal(t, "TestBreaker", dcb.Name())
 	assert.Equal(t, uint32(3), dcb.maxRequests)
@@ -137,7 +129,6 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	// Check if initial state is closed
 	assertState(t, dcb, StateClosed)
@@ -171,7 +162,6 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 
 func TestDistributedCircuitBreakerExecution(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	// Test successful execution
 	result, err := dcb.Execute(func() (interface{}, error) {
@@ -190,7 +180,6 @@ func TestDistributedCircuitBreakerExecution(t *testing.T) {
 
 func TestDistributedCircuitBreakerCounts(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, successRequest(dcb))
