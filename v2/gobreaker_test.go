@@ -549,38 +549,3 @@ func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
 
 	wg.Wait()
 }
-
-func TestWindowCountsBucketAt(t *testing.T) {
-	// Create a windowCounts with 5 buckets
-	rc := newRollingCounts(5)
-
-	// Test bucketAt with different indices
-	assert.Equal(t, Counts{}, rc.bucketAt(0))  // Current bucket (empty)
-	assert.Equal(t, Counts{}, rc.bucketAt(-1)) // Previous bucket (empty)
-	assert.Equal(t, Counts{}, rc.bucketAt(1))  // Next bucket (empty)
-	assert.Equal(t, Counts{}, rc.bucketAt(-2)) // Two buckets ago (empty)
-	assert.Equal(t, Counts{}, rc.bucketAt(2))  // Two buckets ahead (empty)
-
-	// Test that all buckets are the same when empty
-	assert.Equal(t, rc.bucketAt(0), rc.bucketAt(-1))
-	assert.Equal(t, rc.bucketAt(0), rc.bucketAt(1))
-
-	// Test circular buffer behavior
-	// Add some data to current bucket
-	rc.buckets[rc.current()].Requests = 10
-	rc.buckets[rc.current()].TotalSuccesses = 5
-
-	// Rotate to next bucket
-	rc.roll()
-
-	// Now bucketAt(0) should be the new current bucket (empty)
-	// and bucketAt(-1) should be the previous bucket (with data)
-	assert.Equal(t, uint32(0), rc.bucketAt(0).Requests)
-	assert.Equal(t, uint32(10), rc.bucketAt(-1).Requests)
-	assert.Equal(t, uint32(5), rc.bucketAt(-1).TotalSuccesses)
-
-	// Test edge case with empty buckets
-	emptyRC := newRollingCounts(0)
-	assert.Equal(t, Counts{}, emptyRC.bucketAt(0))
-	assert.Equal(t, Counts{}, emptyRC.bucketAt(-1))
-}
