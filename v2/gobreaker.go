@@ -138,14 +138,34 @@ func (rc *rollingCounts) roll() {
 
 	oldest := rc.buckets[current]
 	if rc.ConsecutiveSuccesses == rc.TotalSuccesses {
-		rc.ConsecutiveSuccesses -= oldest.ConsecutiveSuccesses
+		if rc.ConsecutiveSuccesses > oldest.ConsecutiveSuccesses {
+			rc.ConsecutiveSuccesses -= oldest.ConsecutiveSuccesses
+		} else {
+			rc.ConsecutiveSuccesses = 0
+		}
 	}
 	if rc.ConsecutiveFailures == rc.TotalFailures {
-		rc.ConsecutiveFailures -= oldest.ConsecutiveFailures
+		if rc.ConsecutiveFailures > oldest.ConsecutiveFailures {
+			rc.ConsecutiveFailures -= oldest.ConsecutiveFailures
+		} else {
+			rc.ConsecutiveFailures = 0
+		}
 	}
-	rc.Requests -= oldest.Requests
-	rc.TotalSuccesses -= oldest.TotalSuccesses
-	rc.TotalFailures -= oldest.TotalFailures
+	if rc.Requests > oldest.Requests {
+		rc.Requests -= oldest.Requests
+	} else {
+		rc.Requests = 0
+	}
+	if rc.TotalSuccesses > oldest.TotalSuccesses {
+		rc.TotalSuccesses -= oldest.TotalSuccesses
+	} else {
+		rc.TotalSuccesses = 0
+	}
+	if rc.TotalFailures > oldest.TotalFailures {
+		rc.TotalFailures -= oldest.TotalFailures
+	} else {
+		rc.TotalFailures = 0
+	}
 
 	rc.buckets[current].clear()
 }
@@ -168,12 +188,12 @@ func (rc *rollingCounts) bucketAt(index int) Counts {
 		return Counts{}
 	}
 
-	index += bucketLen
-	if index < 0 {
-		return Counts{}
+	idx := index % bucketLen
+	if idx < 0 {
+		idx += bucketLen
 	}
 
-	bucketIndex := (rc.current() + uint64(index)) % uint64(bucketLen)
+	bucketIndex := (rc.current() + uint64(idx)) % uint64(bucketLen)
 	return rc.buckets[bucketIndex]
 }
 
@@ -264,7 +284,7 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.interval = defaultInterval
 		cb.bucketPeriod = cb.interval
 		numBuckets = 1
-	} else if st.BucketPeriod <= 0 || st.BucketPeriod == st.Interval {
+	} else if st.BucketPeriod <= 0 {
 		cb.interval = st.Interval
 		cb.bucketPeriod = cb.interval
 		numBuckets = 1
@@ -469,6 +489,10 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 }
 
 func (cb *CircuitBreaker[T]) age(now time.Time) uint64 {
+	if cb.bucketPeriod == 0 {
+		return 0
+	}
+
 	elapsed := now.Sub(cb.start)
 	age := int64(elapsed / cb.bucketPeriod)
 	if age < 0 {
