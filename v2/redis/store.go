@@ -11,18 +11,18 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
-type RedisStore struct {
+type Store struct {
 	ctx    context.Context
 	client *redis.Client
 	rs     *redsync.Redsync
 	mutex  map[string]*redsync.Mutex
 }
 
-func NewRedisStore(addr string) gobreaker.SharedDataStore {
+func NewStore(addr string) gobreaker.SharedDataStore {
 	client := redis.NewClient(&redis.Options{
 		Addr: addr,
 	})
-	return &RedisStore{
+	return &Store{
 		ctx:    context.Background(),
 		client: client,
 		rs:     redsync.New(goredis.NewPool(client)),
@@ -30,8 +30,8 @@ func NewRedisStore(addr string) gobreaker.SharedDataStore {
 	}
 }
 
-func NewRedisStoreFromClient(client *redis.Client) gobreaker.SharedDataStore {
-	return &RedisStore{
+func NewStoreFromClient(client *redis.Client) gobreaker.SharedDataStore {
+	return &Store{
 		ctx:    context.Background(),
 		client: client,
 		rs:     redsync.New(goredis.NewPool(client)),
@@ -39,7 +39,7 @@ func NewRedisStoreFromClient(client *redis.Client) gobreaker.SharedDataStore {
 	}
 }
 
-func (rs *RedisStore) Lock(name string) error {
+func (rs *Store) Lock(name string) error {
 	mutex, ok := rs.mutex[name]
 	if ok {
 		return mutex.Lock()
@@ -50,7 +50,7 @@ func (rs *RedisStore) Lock(name string) error {
 	return mutex.Lock()
 }
 
-func (rs *RedisStore) Unlock(name string) error {
+func (rs *Store) Unlock(name string) error {
 	mutex, ok := rs.mutex[name]
 	if ok {
 		var err error
@@ -62,14 +62,14 @@ func (rs *RedisStore) Unlock(name string) error {
 	return errors.New("unlock failed")
 }
 
-func (rs *RedisStore) GetData(name string) ([]byte, error) {
+func (rs *Store) GetData(name string) ([]byte, error) {
 	return rs.client.Get(rs.ctx, name).Bytes()
 }
 
-func (rs *RedisStore) SetData(name string, data []byte) error {
+func (rs *Store) SetData(name string, data []byte) error {
 	return rs.client.Set(rs.ctx, name, data, 0).Err()
 }
 
-func (rs *RedisStore) Close() {
+func (rs *Store) Close() {
 	rs.client.Close()
 }

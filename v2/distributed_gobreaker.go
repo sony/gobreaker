@@ -71,8 +71,8 @@ func NewDistributedCircuitBreaker[T any](store SharedDataStore, settings Setting
 }
 
 const (
-	mutexTimeout  = 5 * time.Second
-	mutexWaitTime = 500 * time.Millisecond
+	MutexTimeout  = 5 * time.Second
+	MutexWaitTime = 500 * time.Millisecond
 )
 
 func (dcb *DistributedCircuitBreaker[T]) mutexKey() string {
@@ -85,14 +85,14 @@ func (dcb *DistributedCircuitBreaker[T]) lock() error {
 	}
 
 	var err error
-	expiry := time.Now().Add(mutexTimeout)
+	expiry := time.Now().Add(MutexTimeout)
 	for time.Now().Before(expiry) {
 		err = dcb.store.Lock(dcb.mutexKey())
 		if err == nil {
 			return nil
 		}
 
-		time.Sleep(mutexWaitTime)
+		time.Sleep(MutexWaitTime)
 	}
 	return err
 }

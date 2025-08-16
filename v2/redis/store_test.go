@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupTestRedis() (*miniredis.Miniredis, *RedisStore) {
+func setupTestRedis() (*miniredis.Miniredis, *Store) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		panic(err)
@@ -25,7 +25,7 @@ func setupTestRedis() (*miniredis.Miniredis, *RedisStore) {
 		Addr: mr.Addr(),
 	})
 
-	store := &RedisStore{
+	store := &Store{
 		ctx:    context.Background(),
 		client: client,
 		rs:     redsync.New(goredis.NewPool(client)),
@@ -40,7 +40,7 @@ func TestNewRedisStore(t *testing.T) {
 	require.NoError(t, err)
 	defer mr.Close()
 
-	store := NewRedisStore(mr.Addr())
+	store := NewStore(mr.Addr())
 	assert.NotNil(t, store)
 
 	// Test that it implements the interface
@@ -56,7 +56,7 @@ func TestNewRedisStoreFromClient(t *testing.T) {
 		Addr: mr.Addr(),
 	})
 
-	store := NewRedisStoreFromClient(client)
+	store := NewStoreFromClient(client)
 	assert.NotNil(t, store)
 
 	// Test that it implements the interface
@@ -282,9 +282,9 @@ func TestRedisStore_Integration_WithDistributedCircuitBreaker(t *testing.T) {
 	require.NoError(t, err)
 	defer mr.Close()
 
-	store := NewRedisStore(mr.Addr())
+	store := NewStore(mr.Addr())
 	defer func() {
-		if rs, ok := store.(*RedisStore); ok {
+		if rs, ok := store.(*Store); ok {
 			rs.Close()
 		}
 	}()
@@ -312,9 +312,9 @@ func TestRedisStore_Integration_WithDistributedCircuitBreaker(t *testing.T) {
 
 func TestRedisStore_Error_Handling(t *testing.T) {
 	// Test with invalid Redis address
-	store := NewRedisStore("invalid-address:6379")
+	store := NewStore("invalid-address:6379")
 	defer func() {
-		if rs, ok := store.(*RedisStore); ok {
+		if rs, ok := store.(*Store); ok {
 			rs.Close()
 		}
 	}()
