@@ -112,11 +112,18 @@ func (rc *rollingCounts) roll() {
 }
 
 func (rc *rollingCounts) subtract(oldest uint64) {
+	length := uint64(len(rc.buckets))
+	if length == 0 {
+		return
+	}
+
+	oldest = oldest % length
 	bucket := rc.buckets[oldest]
 
 	totalSuccesses := bucket.ConsecutiveSuccesses
-	for i := 1; i < len(rc.buckets); i++ {
-		totalSuccesses += rc.buckets[rc.index(oldest+uint64(i))].TotalSuccesses
+	for i := uint64(1); i < length; i++ {
+		idx := (oldest + i) % length
+		totalSuccesses += rc.buckets[idx].TotalSuccesses
 	}
 	if rc.ConsecutiveSuccesses == totalSuccesses {
 		if rc.ConsecutiveSuccesses > bucket.ConsecutiveSuccesses {
@@ -127,8 +134,9 @@ func (rc *rollingCounts) subtract(oldest uint64) {
 	}
 
 	totalFailures := bucket.ConsecutiveFailures
-	for i := 1; i < len(rc.buckets); i++ {
-		totalFailures += rc.buckets[rc.index(oldest+uint64(i))].TotalFailures
+	for i := uint64(1); i < length; i++ {
+		idx := (oldest + i) % length
+		totalFailures += rc.buckets[idx].TotalFailures
 	}
 	if rc.ConsecutiveFailures == totalFailures {
 		if rc.ConsecutiveFailures > bucket.ConsecutiveFailures {
