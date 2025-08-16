@@ -304,3 +304,9 @@ func TestRollingCountsBucketAt(t *testing.T) {
 	assert.Equal(t, Counts{}, rc.buckets[rc.index(0)])
 	assert.Equal(t, Counts{}, rc.buckets[rc.index(1)])
 }
+
+func TestEmptyRollingCounts(t *testing.T) {
+	rc := newRollingCounts(0)
+	rc.subtract(0) // no change
+	assert.Equal(t, Counts{}, rc.bucketAt(0))
+}
