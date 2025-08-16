@@ -1,12 +1,14 @@
-package gobreaker
+package redis
 
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
+	"github.com/sony/gobreaker/v2"
 )
 
 type RedisStore struct {
@@ -16,7 +18,7 @@ type RedisStore struct {
 	mutex  map[string]*redsync.Mutex
 }
 
-func NewRedisStore(addr string) SharedDataStore {
+func NewRedisStore(addr string) gobreaker.SharedDataStore {
 	client := redis.NewClient(&redis.Options{
 		Addr: addr,
 	})
@@ -28,7 +30,7 @@ func NewRedisStore(addr string) SharedDataStore {
 	}
 }
 
-func NewRedisStoreFromClient(client *redis.Client) SharedDataStore {
+func NewRedisStoreFromClient(client *redis.Client) gobreaker.SharedDataStore {
 	return &RedisStore{
 		ctx:    context.Background(),
 		client: client,
@@ -43,7 +45,7 @@ func (rs *RedisStore) Lock(name string) error {
 		return mutex.Lock()
 	}
 
-	mutex = rs.rs.NewMutex(name, redsync.WithExpiry(mutexTimeout))
+	mutex = rs.rs.NewMutex(name, redsync.WithExpiry(5*time.Second))
 	rs.mutex[name] = mutex
 	return mutex.Lock()
 }
