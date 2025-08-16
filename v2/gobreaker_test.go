@@ -23,6 +23,7 @@ type StateChange struct {
 var stateChange StateChange
 
 func pseudoSleep(cb *CircuitBreaker[bool], period time.Duration) {
+	cb.start = cb.start.Add(-period)
 	if !cb.expiry.IsZero() {
 		cb.expiry = cb.expiry.Add(-period)
 	}
@@ -170,14 +171,14 @@ func TestNewCircuitBreaker(t *testing.T) {
 	rollingWindowCB := newRollingWindow()
 	assert.Equal(t, "rw", rollingWindowCB.name)
 	assert.Equal(t, uint32(3), rollingWindowCB.maxRequests)
-	assert.Equal(t, time.Duration(3)*time.Second, rollingWindowCB.interval)
+	assert.Equal(t, time.Duration(30)*time.Second, rollingWindowCB.interval)
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	assert.Equal(t, time.Duration(90)*time.Second, rollingWindowCB.timeout)
 	assert.NotNil(t, rollingWindowCB.readyToTrip)
 	assert.NotNil(t, rollingWindowCB.onStateChange)
 	assert.Equal(t, StateClosed, rollingWindowCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.Counts())
-	assert.False(t, rollingWindowCB.expiry.IsZero())
+	assert.True(t, rollingWindowCB.expiry.IsZero())
 
 	negativeDurationCB := newNegativeDurationCB()
 	assert.Equal(t, "ncb", negativeDurationCB.name)
@@ -379,7 +380,7 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	// StateOpen to StateHalfOpen
 	pseudoSleep(rollingCB, time.Duration(90)*time.Second)
 	assert.Equal(t, StateHalfOpen, rollingCB.State())
-	assert.True(t, defaultCB.expiry.IsZero())
+	assert.True(t, rollingCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"rw", StateOpen, StateHalfOpen}, stateChange)
 
 	assert.Nil(t, succeed(rollingCB))
@@ -395,7 +396,7 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Nil(t, <-ch)
 	assert.Equal(t, StateClosed, rollingCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingCB.Counts())
-	assert.False(t, rollingCB.expiry.IsZero())
+	assert.True(t, rollingCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"rw", StateHalfOpen, StateClosed}, stateChange)
 }
 

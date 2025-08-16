@@ -110,12 +110,16 @@ func (rc *rollingCounts) onRequest() {
 
 func (rc *rollingCounts) onSuccess(age uint64) {
 	rc.Counts.onSuccess()
-	rc.buckets[rc.index(age)].onSuccess()
+	if rc.age-age < uint64(len(rc.buckets)) {
+		rc.buckets[rc.index(age)].onSuccess()
+	}
 }
 
 func (rc *rollingCounts) onFailure(age uint64) {
 	rc.Counts.onFailure()
-	rc.buckets[rc.index(age)].onFailure()
+	if rc.age-age < uint64(len(rc.buckets)) {
+		rc.buckets[rc.index(age)].onFailure()
+	}
 }
 
 func (rc *rollingCounts) clear() {
@@ -144,6 +148,18 @@ func (rc *rollingCounts) roll() {
 	rc.TotalFailures -= oldest.TotalFailures
 
 	rc.buckets[current].clear()
+}
+
+func (rc *rollingCounts) grow(age uint64) {
+	diff := age - rc.age
+	if diff >= uint64(len(rc.buckets)) {
+		rc.clear()
+		rc.age = age
+	} else if diff > 0 {
+		for i := 0; i < int(diff); i++ {
+			rc.roll()
+		}
+	}
 }
 
 func (rc *rollingCounts) bucketAt(index int) Counts {
@@ -219,6 +235,7 @@ type CircuitBreaker[T any] struct {
 	state      State
 	generation uint64
 	counts     *rollingCounts
+	start      time.Time
 	expiry     time.Time
 }
 
@@ -255,7 +272,6 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.interval = (st.Interval + st.BucketPeriod - 1) / st.BucketPeriod * st.BucketPeriod
 		cb.bucketPeriod = st.BucketPeriod
 		numBuckets = int64(cb.interval / cb.bucketPeriod)
-		cb.interval = cb.bucketPeriod // to be removed later
 	}
 
 	cb.counts = newRollingCounts(numBuckets)
@@ -395,13 +411,13 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
 	return generation, age, nil
 }
 
-func (cb *CircuitBreaker[T]) afterRequest(before uint64, age uint64, success bool) {
+func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, generation, age := cb.currentState(now)
-	if generation != before {
+	state, generation, _ := cb.currentState(now)
+	if generation != previous {
 		return
 	}
 
@@ -440,7 +456,10 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 	switch cb.state {
 	case StateClosed:
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
-			cb.toNewBucket(cb.expiry)
+			cb.toNewGeneration(now)
+		} else if len(cb.counts.buckets) >= 2 {
+			age := uint64(now.Sub(cb.start) / cb.bucketPeriod)
+			cb.counts.grow(age)
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
@@ -465,11 +484,15 @@ func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
 	}
 }
 
-func (cb *CircuitBreaker[T]) updateExpiry(now time.Time) {
+func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
+	cb.generation++
+	cb.start = now
+	cb.counts.clear()
+
 	var zero time.Time
 	switch cb.state {
 	case StateClosed:
-		if cb.interval == 0 {
+		if cb.interval == 0 || len(cb.counts.buckets) >= 2 {
 			cb.expiry = zero
 		} else {
 			cb.expiry = now.Add(cb.interval)
@@ -479,19 +502,4 @@ func (cb *CircuitBreaker[T]) updateExpiry(now time.Time) {
 	default: // StateHalfOpen
 		cb.expiry = zero
 	}
-}
-
-func (cb *CircuitBreaker[T]) toNewGeneration(now time.Time) {
-	cb.generation++
-
-	cb.counts.clear()
-	cb.updateExpiry(now)
-}
-
-func (cb *CircuitBreaker[T]) toNewBucket(lastExpiry time.Time) {
-	cb.counts.roll()
-	if cb.counts.age == uint64(len(cb.counts.buckets)) {
-		cb.generation++
-	}
-	cb.updateExpiry(lastExpiry)
 }
