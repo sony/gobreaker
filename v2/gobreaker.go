@@ -458,14 +458,7 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
 			cb.toNewGeneration(now)
 		} else if len(cb.counts.buckets) >= 2 {
-			elapsed := now.Sub(cb.start)
-			var age uint64
-			if elapsed < 0 {
-				age = 0
-			} else {
-				age = uint64(elapsed / cb.bucketPeriod)
-			}
-			cb.counts.grow(age)
+			cb.counts.grow(cb.age(now))
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
@@ -473,6 +466,14 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		}
 	}
 	return cb.state, cb.generation, cb.counts.age
+}
+
+func (cb *CircuitBreaker[T]) age(now time.Time) uint64 {
+	elapsed := now.Sub(cb.start)
+	if elapsed < 0 {
+		return 0
+	}
+	return uint64(elapsed / cb.bucketPeriod)
 }
 
 func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
