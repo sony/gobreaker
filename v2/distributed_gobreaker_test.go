@@ -2,25 +2,64 @@ package gobreaker
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
 )
 
-var redisServer *miniredis.Miniredis
+// MockStore implements SharedDataStore interface for testing
+type MockStore struct {
+	data map[string][]byte
+	mu   sync.RWMutex
+}
+
+func NewMockStore() *MockStore {
+	return &MockStore{
+		data: make(map[string][]byte),
+	}
+}
+
+func (m *MockStore) Lock(name string) error {
+	// Mock implementation - no actual locking needed for tests
+	return nil
+}
+
+func (m *MockStore) Unlock(name string) error {
+	// Mock implementation - no actual unlocking needed for tests
+	return nil
+}
+
+func (m *MockStore) GetData(name string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, exists := m.data[name]
+	if !exists {
+		return nil, nil
+	}
+	return data, nil
+}
+
+func (m *MockStore) SetData(name string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.data[name] = data
+	return nil
+}
+
+func (m *MockStore) Close() {
+	// Mock implementation - no cleanup needed
+}
+
+var mockStore *MockStore
 
 func setUpDCB() *DistributedCircuitBreaker[any] {
-	var err error
-	redisServer, err := miniredis.Run()
-	if err != nil {
-		panic(err)
-	}
+	mockStore = NewMockStore()
 
-	store := NewRedisStore(redisServer.Addr())
-
-	dcb, err := NewDistributedCircuitBreaker[any](store, Settings{
+	dcb, err := NewDistributedCircuitBreaker[any](mockStore, Settings{
 		Name:        "TestBreaker",
 		MaxRequests: 3,
 		Interval:    time.Second,
@@ -34,18 +73,6 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 	}
 
 	return dcb
-}
-
-func tearDownDCB(dcb *DistributedCircuitBreaker[any]) {
-	if dcb != nil {
-		store := dcb.store.(*RedisStore)
-		store.Close()
-	}
-
-	if redisServer != nil {
-		redisServer.Close()
-		redisServer = nil
-	}
 }
 
 func dcbPseudoSleep(dcb *DistributedCircuitBreaker[any], period time.Duration) {
@@ -90,7 +117,6 @@ func assertState(t *testing.T, dcb *DistributedCircuitBreaker[any], expected Sta
 
 func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	assert.Equal(t, "TestBreaker", dcb.Name())
 	assert.Equal(t, uint32(3), dcb.maxRequests)
@@ -103,7 +129,6 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	// Check if initial state is closed
 	assertState(t, dcb, StateClosed)
@@ -137,7 +162,6 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 
 func TestDistributedCircuitBreakerExecution(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	// Test successful execution
 	result, err := dcb.Execute(func() (interface{}, error) {
@@ -156,7 +180,6 @@ func TestDistributedCircuitBreakerExecution(t *testing.T) {
 
 func TestDistributedCircuitBreakerCounts(t *testing.T) {
 	dcb := setUpDCB()
-	defer tearDownDCB(dcb)
 
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, successRequest(dcb))
@@ -175,15 +198,10 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 var customDCB *DistributedCircuitBreaker[any]
 
 func TestCustomDistributedCircuitBreaker(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		panic(err)
-	}
-	defer mr.Close()
+	mockStore = NewMockStore()
 
-	store := NewRedisStore(mr.Addr())
-
-	customDCB, err = NewDistributedCircuitBreaker[any](store, Settings{
+	var err error
+	customDCB, err = NewDistributedCircuitBreaker[any](mockStore, Settings{
 		Name:        "CustomBreaker",
 		MaxRequests: 3,
 		Interval:    time.Second * 30,
@@ -264,15 +282,9 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 		},
 	}
 
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("Failed to start miniredis: %v", err)
-	}
-	defer mr.Close()
+	mockStore = NewMockStore()
 
-	store := NewRedisStore(mr.Addr())
-
-	dcb, err := NewDistributedCircuitBreaker[any](store, customSt)
+	dcb, err := NewDistributedCircuitBreaker[any](mockStore, customSt)
 	assert.NoError(t, err)
 
 	// Test case
