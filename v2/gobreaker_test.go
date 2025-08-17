@@ -46,16 +46,6 @@ func succeedLater(cb *CircuitBreaker[bool], delay time.Duration) <-chan error {
 	return ch
 }
 
-func succeed2Step(cb *TwoStepCircuitBreaker[bool]) error {
-	done, err := cb.Allow()
-	if err != nil {
-		return err
-	}
-
-	done(true)
-	return nil
-}
-
 func fail(cb *CircuitBreaker[bool]) error {
 	msg := "fail"
 	_, err := cb.Execute(func() (bool, error) { return false, errors.New(msg) })
@@ -65,18 +55,8 @@ func fail(cb *CircuitBreaker[bool]) error {
 	return err
 }
 
-func fail2Step(cb *TwoStepCircuitBreaker[bool]) error {
-	done, err := cb.Allow()
-	if err != nil {
-		return err
-	}
-
-	done(false)
-	return nil
-}
-
 func causePanic(cb *CircuitBreaker[bool]) error {
-	_, err := cb.Execute(func() (bool, error) { panic("oops"); return false, nil })
+	_, err := cb.Execute(func() (bool, error) { panic("oops") })
 	return err
 }
 
@@ -398,63 +378,6 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingCB.Counts())
 	assert.True(t, rollingCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"rw", StateHalfOpen, StateClosed}, stateChange)
-}
-
-func TestTwoStepCircuitBreaker(t *testing.T) {
-	tscb := NewTwoStepCircuitBreaker[bool](Settings{Name: "tscb"})
-	assert.Equal(t, "tscb", tscb.Name())
-
-	for i := 0; i < 5; i++ {
-		assert.Nil(t, fail2Step(tscb))
-	}
-
-	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{5, 0, 5, 0, 5}, tscb.cb.Counts())
-
-	assert.Nil(t, succeed2Step(tscb))
-	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{6, 1, 5, 1, 0}, tscb.cb.Counts())
-
-	assert.Nil(t, fail2Step(tscb))
-	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{7, 1, 6, 0, 1}, tscb.cb.Counts())
-
-	// StateClosed to StateOpen
-	for i := 0; i < 5; i++ {
-		assert.Nil(t, fail2Step(tscb)) // 6 consecutive failures
-	}
-	assert.Equal(t, StateOpen, tscb.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.Counts())
-	assert.False(t, tscb.cb.expiry.IsZero())
-
-	assert.Error(t, succeed2Step(tscb))
-	assert.Error(t, fail2Step(tscb))
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.Counts())
-
-	pseudoSleep(tscb.cb, time.Duration(59)*time.Second)
-	assert.Equal(t, StateOpen, tscb.State())
-
-	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(1)*time.Second) // over Timeout
-	assert.Equal(t, StateHalfOpen, tscb.State())
-	assert.True(t, tscb.cb.expiry.IsZero())
-
-	// StateHalfOpen to StateOpen
-	assert.Nil(t, fail2Step(tscb))
-	assert.Equal(t, StateOpen, tscb.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.Counts())
-	assert.False(t, tscb.cb.expiry.IsZero())
-
-	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(60)*time.Second)
-	assert.Equal(t, StateHalfOpen, tscb.State())
-	assert.True(t, tscb.cb.expiry.IsZero())
-
-	// StateHalfOpen to StateClosed
-	assert.Nil(t, succeed2Step(tscb))
-	assert.Equal(t, StateClosed, tscb.State())
-	assert.Equal(t, Counts{0, 0, 0, 0, 0}, tscb.cb.Counts())
-	assert.True(t, tscb.cb.expiry.IsZero())
 }
 
 func TestPanicInRequest(t *testing.T) {
