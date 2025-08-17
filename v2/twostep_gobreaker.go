@@ -1,5 +1,3 @@
-// Package gobreaker implements the Circuit Breaker pattern.
-// See https://msdn.microsoft.com/en-us/library/dn589784.aspx.
 package gobreaker
 
 // TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
