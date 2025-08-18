@@ -245,31 +245,31 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 }
 
 // Name returns the name of the TwoStepCircuitBreaker.
-func (tscb *TwoStepCircuitBreaker) Name() string {
-	return tscb.cb.Name()
+func (breaker *TwoStepCircuitBreaker) Name() string {
+	return breaker.cb.Name()
 }
 
 // State returns the current state of the TwoStepCircuitBreaker.
-func (tscb *TwoStepCircuitBreaker) State() State {
-	return tscb.cb.State()
+func (breaker *TwoStepCircuitBreaker) State() State {
+	return breaker.cb.State()
 }
 
 // Counts returns internal counters
-func (tscb *TwoStepCircuitBreaker) Counts() Counts {
-	return tscb.cb.Counts()
+func (breaker *TwoStepCircuitBreaker) Counts() Counts {
+	return breaker.cb.Counts()
 }
 
 // Allow checks if a new request can proceed. It returns a callback that should be used to
 // register the success or failure in a separate step. If the circuit breaker doesn't allow
 // requests, it returns an error.
-func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
-	generation, err := tscb.cb.beforeRequest()
+func (breaker *TwoStepCircuitBreaker) Allow() (afterRequestCallback func(success bool), err error) {
+	generation, err := breaker.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
 	return func(success bool) {
-		tscb.cb.afterRequest(generation, success)
+		breaker.cb.afterRequest(generation, success)
 	}, nil
 }
 
