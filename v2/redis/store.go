@@ -56,6 +56,7 @@ func (rs *Store) Unlock(name string) error {
 		var err error
 		ok, err = mutex.Unlock()
 		if ok && err == nil {
+			delete(rs.mutex, name)
 			return nil
 		}
 	}
