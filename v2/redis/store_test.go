@@ -191,6 +191,26 @@ func TestRedisStore_Unlock_WithoutLock(t *testing.T) {
 	assert.Contains(t, err.Error(), "unlock failed")
 }
 
+func TestRedisStore_MutexCleanup(t *testing.T) {
+	mr, store := setupTestRedis()
+	defer mr.Close()
+	defer store.Close()
+
+	key := "cleanup-test-mutex"
+
+	err := store.Lock(key)
+	assert.NoError(t, err)
+
+	_, exists := store.mutex[key]
+	assert.True(t, exists, "Mutex should exist in map after lock")
+
+	err = store.Unlock(key)
+	assert.NoError(t, err)
+
+	_, exists = store.mutex[key]
+	assert.False(t, exists, "Mutex should be removed from map after successful unlock")
+}
+
 func TestRedisStore_Concurrent_Operations(t *testing.T) {
 	mr, store := setupTestRedis()
 	defer mr.Close()
