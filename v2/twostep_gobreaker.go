@@ -1,5 +1,7 @@
 package gobreaker
 
+import "context"
+
 // TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
 // with the breaker functionality, it only checks whether a request can proceed and
 // expects the caller to report the outcome in a separate step using a callback.
@@ -33,12 +35,17 @@ func (tscb *TwoStepCircuitBreaker[T]) Counts() Counts {
 // register the success or failure in a separate step. If the circuit breaker does not allow
 // requests, it returns an error.
 func (tscb *TwoStepCircuitBreaker[T]) Allow() (done func(success bool), err error) {
-	generation, age, err := tscb.cb.beforeRequest()
+	return tscb.AllowCtx(context.Background())
+}
+
+// AllowCtx is like Allow but accepts a context which will be propagated to state change callbacks.
+func (tscb *TwoStepCircuitBreaker[T]) AllowCtx(ctx context.Context) (done func(success bool), err error) {
+	generation, age, err := tscb.cb.beforeRequest(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return func(success bool) {
-		tscb.cb.afterRequest(generation, age, success)
+		tscb.cb.afterRequest(ctx, generation, age, success)
 	}, nil
 }

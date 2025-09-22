@@ -1,6 +1,7 @@
 package gobreaker
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"sync"
@@ -21,6 +22,8 @@ type StateChange struct {
 }
 
 var stateChange StateChange
+
+type ctxKey string
 
 func pseudoSleep(cb *CircuitBreaker[bool], period time.Duration) {
 	cb.start = cb.start.Add(-period)
@@ -132,7 +135,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, time.Duration(0), defaultCB.interval)
 	assert.Equal(t, time.Duration(60)*time.Second, defaultCB.timeout)
 	assert.NotNil(t, defaultCB.readyToTrip)
-	assert.Nil(t, defaultCB.onStateChange)
+	assert.Nil(t, defaultCB.onStateChangeCtx)
 	assert.Equal(t, StateClosed, defaultCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.Counts())
 	assert.True(t, defaultCB.expiry.IsZero())
@@ -143,7 +146,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, time.Duration(30)*time.Second, customCB.interval)
 	assert.Equal(t, time.Duration(90)*time.Second, customCB.timeout)
 	assert.NotNil(t, customCB.readyToTrip)
-	assert.NotNil(t, customCB.onStateChange)
+	assert.NotNil(t, customCB.onStateChangeCtx)
 	assert.Equal(t, StateClosed, customCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.Counts())
 	assert.False(t, customCB.expiry.IsZero())
@@ -155,7 +158,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	assert.Equal(t, time.Duration(90)*time.Second, rollingWindowCB.timeout)
 	assert.NotNil(t, rollingWindowCB.readyToTrip)
-	assert.NotNil(t, rollingWindowCB.onStateChange)
+	assert.NotNil(t, rollingWindowCB.onStateChangeCtx)
 	assert.Equal(t, StateClosed, rollingWindowCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.Counts())
 	assert.True(t, rollingWindowCB.expiry.IsZero())
@@ -166,7 +169,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, time.Duration(0)*time.Second, negativeDurationCB.interval)
 	assert.Equal(t, time.Duration(60)*time.Second, negativeDurationCB.timeout)
 	assert.NotNil(t, negativeDurationCB.readyToTrip)
-	assert.Nil(t, negativeDurationCB.onStateChange)
+	assert.Nil(t, negativeDurationCB.onStateChangeCtx)
 	assert.Equal(t, StateClosed, negativeDurationCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, negativeDurationCB.Counts())
 	assert.True(t, negativeDurationCB.expiry.IsZero())
@@ -471,4 +474,108 @@ func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestOnStateChangeCtx_ExecuteCtx(t *testing.T) {
+	var got struct {
+		name string
+		from State
+		to   State
+		val  any
+	}
+
+	st := Settings{
+		Name:        "ctxcb1",
+		MaxRequests: 3,
+		Timeout:     2 * time.Second,
+		ReadyToTrip: func(c Counts) bool { return c.ConsecutiveFailures >= 1 },
+		OnStateChangeCtx: func(ctx context.Context, name string, from State, to State) {
+			got.name = name
+			got.from = from
+			got.to = to
+			got.val = ctx.Value(ctxKey("id"))
+		},
+	}
+	cb := NewCircuitBreaker[bool](st)
+
+	ctx := context.WithValue(context.Background(), ctxKey("id"), "exec1")
+	_, err := cb.ExecuteCtx(ctx, func() (bool, error) { return false, assert.AnError })
+	assert.Error(t, err)
+
+	assert.Equal(t, "ctxcb1", got.name)
+	assert.Equal(t, StateClosed, got.from)
+	assert.Equal(t, StateOpen, got.to)
+	assert.Equal(t, "exec1", got.val)
+}
+
+func TestOnStateChangeCtx_StateCtx_TimeoutTransition(t *testing.T) {
+	var got struct {
+		val      any
+		from, to State
+	}
+
+	st := Settings{
+		Name:        "ctxcb2",
+		Timeout:     time.Second,
+		ReadyToTrip: func(c Counts) bool { return c.ConsecutiveFailures >= 1 },
+		OnStateChangeCtx: func(ctx context.Context, name string, from State, to State) {
+			if name == "ctxcb2" {
+				got.from = from
+				got.to = to
+				got.val = ctx.Value(ctxKey("poll"))
+			}
+		},
+	}
+	cb := NewCircuitBreaker[bool](st)
+	// Trip to open
+	_, _ = cb.ExecuteCtx(context.Background(), func() (bool, error) { return false, assert.AnError })
+	assert.Equal(t, StateOpen, cb.State())
+
+	// Move time and call StateCtx to trigger HalfOpen with provided ctx
+	pseudoSleep(cb, st.Timeout+time.Millisecond)
+	pollCtx := context.WithValue(context.Background(), ctxKey("poll"), "state-call")
+	state := cb.StateCtx(pollCtx)
+	assert.Equal(t, StateHalfOpen, state)
+	assert.Equal(t, StateOpen, got.from)
+	assert.Equal(t, StateHalfOpen, got.to)
+	assert.Equal(t, "state-call", got.val)
+}
+
+func TestTwoStep_AllowCtx_ContextPropagation(t *testing.T) {
+	var got struct {
+		from, to State
+		val      any
+	}
+	st := Settings{
+		Name:        "twostep",
+		MaxRequests: 2,
+		ReadyToTrip: func(c Counts) bool { return c.ConsecutiveFailures >= 1 },
+		OnStateChangeCtx: func(ctx context.Context, name string, from State, to State) {
+			if name == "twostep" {
+				got.from = from
+				got.to = to
+				got.val = ctx.Value(ctxKey("step"))
+			}
+		},
+	}
+	tscb := NewTwoStepCircuitBreaker[bool](st)
+
+	ctx := context.WithValue(context.Background(), ctxKey("step"), "allow-ctx")
+	done, err := tscb.AllowCtx(ctx)
+	assert.NoError(t, err)
+	done(false) // cause failure to trip to open
+
+	assert.Equal(t, StateClosed, got.from)
+	assert.Equal(t, StateOpen, got.to)
+	assert.Equal(t, "allow-ctx", got.val)
+}
+
+func TestNoCallbacks_NoPanic(t *testing.T) {
+	// Ensure no callbacks set does not panic on transitions.
+	cb := NewCircuitBreaker[bool](Settings{ReadyToTrip: func(c Counts) bool { return c.ConsecutiveFailures >= 1 }})
+	// Trip to open and then to half-open
+	_, _ = cb.Execute(func() (bool, error) { return false, assert.AnError })
+	assert.Equal(t, StateOpen, cb.State())
+	pseudoSleep(cb, time.Second*2)
+	_ = cb.State() // should transition as needed without panic
 }
