@@ -182,12 +182,12 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 	}
 
 	state, err := dcb.getSharedState()
-	assert.Equal(t, Counts{5, 5, 0, 5, 0}, state.Counts)
+	assert.Equal(t, Counts{Requests: 5, TotalSuccesses: 5, ConsecutiveSuccesses: 5}, state.Counts)
 	assert.NoError(t, err)
 
 	assert.Nil(t, failRequest(dcb))
 	state, err = dcb.getSharedState()
-	assert.Equal(t, Counts{6, 5, 1, 0, 1}, state.Counts)
+	assert.Equal(t, Counts{Requests: 6, TotalSuccesses: 5, TotalFailures: 1, ConsecutiveFailures: 1}, state.Counts)
 	assert.NoError(t, err)
 }
 
@@ -221,13 +221,13 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		state, err := customDCB.getSharedState()
 		assert.NoError(t, err)
 		assert.Equal(t, StateClosed, state.State)
-		assert.Equal(t, Counts{10, 5, 5, 0, 1}, state.Counts)
+		assert.Equal(t, Counts{Requests: 10, TotalSuccesses: 5, TotalFailures: 5, ConsecutiveFailures: 1}, state.Counts)
 
 		// Perform one more successful request
 		assert.NoError(t, successRequest(customDCB))
 		state, err = customDCB.getSharedState()
 		assert.NoError(t, err)
-		assert.Equal(t, Counts{11, 6, 5, 1, 0}, state.Counts)
+		assert.Equal(t, Counts{Requests: 11, TotalSuccesses: 6, TotalFailures: 5, ConsecutiveSuccesses: 1}, state.Counts)
 
 		// Simulate time passing to reset counts
 		dcbPseudoSleep(customDCB, time.Second*30)
@@ -242,7 +242,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 
 		state, err = customDCB.getSharedState()
 		assert.NoError(t, err)
-		assert.Equal(t, Counts{0, 0, 0, 0, 0}, state.Counts)
+		assert.Equal(t, Counts{}, state.Counts)
 	})
 
 	t.Run("Timeout and Half-Open State", func(t *testing.T) {
