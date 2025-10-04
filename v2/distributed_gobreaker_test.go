@@ -56,7 +56,6 @@ func (m *MockStore) Close() {
 
 func setUpDCB() *DistributedCircuitBreaker[any] {
 	mockStore := NewMockStore()
-
 	dcb, err := NewDistributedCircuitBreaker[any](mockStore, Settings{
 		Name:        "TestBreaker",
 		MaxRequests: 3,
@@ -69,7 +68,6 @@ func setUpDCB() *DistributedCircuitBreaker[any] {
 	if err != nil {
 		panic(err)
 	}
-
 	return dcb
 }
 
@@ -195,7 +193,6 @@ func TestDistributedCircuitBreakerCounts(t *testing.T) {
 
 func TestCustomDistributedCircuitBreaker(t *testing.T) {
 	mockStore := NewMockStore()
-
 	customDCB, err := NewDistributedCircuitBreaker[any](mockStore, Settings{
 		Name:        "CustomBreaker",
 		MaxRequests: 3,
@@ -278,7 +275,6 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	}
 
 	mockStore := NewMockStore()
-
 	dcb, err := NewDistributedCircuitBreaker[any](mockStore, customSt)
 	assert.NoError(t, err)
 
