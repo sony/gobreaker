@@ -3,6 +3,7 @@
 package gobreaker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -67,32 +68,34 @@ func (s State) String() string {
 // Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
 //
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
+// OnStateChangeCtx is like OnStateChange but accepts a context which is propagated from the context-aware methods.
 //
 // IsSuccessful is called with the error returned from a request.
 // If IsSuccessful returns true, the error is counted as a success.
 // Otherwise the error is counted as a failure.
 // If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
 type Settings struct {
-	Name          string
-	MaxRequests   uint32
-	Interval      time.Duration
-	BucketPeriod  time.Duration
-	Timeout       time.Duration
-	ReadyToTrip   func(counts Counts) bool
-	OnStateChange func(name string, from State, to State)
-	IsSuccessful  func(err error) bool
+	Name             string
+	MaxRequests      uint32
+	Interval         time.Duration
+	BucketPeriod     time.Duration
+	Timeout          time.Duration
+	ReadyToTrip      func(counts Counts) bool
+	OnStateChange    func(name string, from State, to State)
+	OnStateChangeCtx func(ctx context.Context, name string, from State, to State)
+	IsSuccessful     func(err error) bool
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
 type CircuitBreaker[T any] struct {
-	name          string
-	maxRequests   uint32
-	interval      time.Duration
-	bucketPeriod  time.Duration
-	timeout       time.Duration
-	readyToTrip   func(counts Counts) bool
-	isSuccessful  func(err error) bool
-	onStateChange func(name string, from State, to State)
+	name             string
+	maxRequests      uint32
+	interval         time.Duration
+	bucketPeriod     time.Duration
+	timeout          time.Duration
+	readyToTrip      func(counts Counts) bool
+	isSuccessful     func(err error) bool
+	onStateChangeCtx func(ctx context.Context, name string, from State, to State)
 
 	mutex      sync.Mutex
 	state      State
@@ -107,7 +110,15 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 	cb := new(CircuitBreaker[T])
 
 	cb.name = st.Name
-	cb.onStateChange = st.OnStateChange
+
+	if st.OnStateChange != nil {
+		cb.onStateChangeCtx = func(_ context.Context, name string, from State, to State) {
+			st.OnStateChange(name, from, to)
+		}
+	}
+	if st.OnStateChangeCtx != nil {
+		cb.onStateChangeCtx = st.OnStateChangeCtx
+	}
 
 	if st.MaxRequests == 0 {
 		cb.maxRequests = 1
@@ -173,11 +184,16 @@ func (cb *CircuitBreaker[T]) Name() string {
 
 // State returns the current state of the CircuitBreaker.
 func (cb *CircuitBreaker[T]) State() State {
+	return cb.StateCtx(context.Background())
+}
+
+// StateCtx is like State but accepts a context which will be propagated to state change callbacks.
+func (cb *CircuitBreaker[T]) StateCtx(ctx context.Context) State {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, _, _ := cb.currentState(now)
+	state, _, _ := cb.currentState(ctx, now)
 	return state
 }
 
@@ -195,7 +211,12 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
 func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
-	generation, age, err := cb.beforeRequest()
+	return cb.ExecuteCtx(context.Background(), req)
+}
+
+// ExecuteCtx is like Execute but accepts a context which will be propagated to state change callbacks.
+func (cb *CircuitBreaker[T]) ExecuteCtx(ctx context.Context, req func() (T, error)) (T, error) {
+	generation, age, err := cb.beforeRequest(ctx)
 	if err != nil {
 		var defaultValue T
 		return defaultValue, err
@@ -204,22 +225,22 @@ func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, age, false)
+			cb.afterRequest(ctx, generation, age, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, age, cb.isSuccessful(err))
+	cb.afterRequest(ctx, generation, age, cb.isSuccessful(err))
 	return result, err
 }
 
-func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
+func (cb *CircuitBreaker[T]) beforeRequest(ctx context.Context) (uint64, uint64, error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, generation, age := cb.currentState(now)
+	state, generation, age := cb.currentState(ctx, now)
 
 	if state == StateOpen {
 		return generation, age, ErrOpenState
@@ -231,48 +252,48 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
 	return generation, age, nil
 }
 
-func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, success bool) {
+func (cb *CircuitBreaker[T]) afterRequest(ctx context.Context, previous uint64, age uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
-	state, generation, _ := cb.currentState(now)
+	state, generation, _ := cb.currentState(ctx, now)
 	if generation != previous {
 		return
 	}
 
 	if success {
-		cb.onSuccess(state, age, now)
+		cb.onSuccess(ctx, state, age, now)
 	} else {
-		cb.onFailure(state, age, now)
+		cb.onFailure(ctx, state, age, now)
 	}
 }
 
-func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {
+func (cb *CircuitBreaker[T]) onSuccess(ctx context.Context, state State, age uint64, now time.Time) {
 	switch state {
 	case StateClosed:
 		cb.counts.onSuccess(age)
 	case StateHalfOpen:
 		cb.counts.onSuccess(age)
 		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
-			cb.setState(StateClosed, now)
+			cb.setState(ctx, StateClosed, now)
 		}
 	}
 }
 
-func (cb *CircuitBreaker[T]) onFailure(state State, age uint64, now time.Time) {
+func (cb *CircuitBreaker[T]) onFailure(ctx context.Context, state State, age uint64, now time.Time) {
 	switch state {
 	case StateClosed:
 		cb.counts.onFailure(age)
 		if cb.readyToTrip(cb.counts.Counts) {
-			cb.setState(StateOpen, now)
+			cb.setState(ctx, StateOpen, now)
 		}
 	case StateHalfOpen:
-		cb.setState(StateOpen, now)
+		cb.setState(ctx, StateOpen, now)
 	}
 }
 
-func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64) {
+func (cb *CircuitBreaker[T]) currentState(ctx context.Context, now time.Time) (State, uint64, uint64) {
 	switch cb.state {
 	case StateClosed:
 		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
@@ -282,7 +303,7 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
-			cb.setState(StateHalfOpen, now)
+			cb.setState(ctx, StateHalfOpen, now)
 		}
 	}
 	return cb.state, cb.generation, cb.counts.age
@@ -301,7 +322,7 @@ func (cb *CircuitBreaker[T]) age(now time.Time) uint64 {
 	return uint64(age)
 }
 
-func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
+func (cb *CircuitBreaker[T]) setState(ctx context.Context, state State, now time.Time) {
 	if cb.state == state {
 		return
 	}
@@ -311,8 +332,8 @@ func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
 
 	cb.toNewGeneration(now)
 
-	if cb.onStateChange != nil {
-		cb.onStateChange(cb.name, prev, state)
+	if cb.onStateChangeCtx != nil {
+		cb.onStateChangeCtx(ctx, cb.name, prev, state)
 	}
 }
 
