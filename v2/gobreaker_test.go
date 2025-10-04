@@ -10,17 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var defaultCB *CircuitBreaker[bool]
-var customCB *CircuitBreaker[bool]
-var rollingCB *CircuitBreaker[bool]
-
 type StateChange struct {
 	name string
 	from State
 	to   State
 }
-
-var stateChange StateChange
 
 func pseudoSleep(cb *CircuitBreaker[bool], period time.Duration) {
 	cb.start = cb.start.Add(-period)
@@ -60,7 +54,7 @@ func causePanic(cb *CircuitBreaker[bool]) error {
 	return err
 }
 
-func newCustom() *CircuitBreaker[bool] {
+func newCustom(stateChange *StateChange) *CircuitBreaker[bool] {
 	var customSt Settings
 	customSt.Name = "cb"
 	customSt.MaxRequests = 3
@@ -72,14 +66,16 @@ func newCustom() *CircuitBreaker[bool] {
 
 		return numReqs >= 3 && failureRatio >= 0.6
 	}
-	customSt.OnStateChange = func(name string, from State, to State) {
-		stateChange = StateChange{name, from, to}
+	if stateChange != nil {
+		customSt.OnStateChange = func(name string, from State, to State) {
+			*stateChange = StateChange{name, from, to}
+		}
 	}
 
 	return NewCircuitBreaker[bool](customSt)
 }
 
-func newRollingWindow() *CircuitBreaker[bool] {
+func newRollingWindow(stateChange *StateChange) *CircuitBreaker[bool] {
 	var rollingWindowSt Settings
 	rollingWindowSt.Name = "rw"
 	rollingWindowSt.MaxRequests = 3
@@ -92,8 +88,10 @@ func newRollingWindow() *CircuitBreaker[bool] {
 
 		return numReqs >= 3 && failureRatio >= 0.6
 	}
-	rollingWindowSt.OnStateChange = func(name string, from State, to State) {
-		stateChange = StateChange{name, from, to}
+	if stateChange != nil {
+		rollingWindowSt.OnStateChange = func(name string, from State, to State) {
+			*stateChange = StateChange{name, from, to}
+		}
 	}
 
 	return NewCircuitBreaker[bool](rollingWindowSt)
@@ -106,12 +104,6 @@ func newNegativeDurationCB() *CircuitBreaker[bool] {
 	negativeSt.Timeout = time.Duration(-90) * time.Second
 
 	return NewCircuitBreaker[bool](negativeSt)
-}
-
-func init() {
-	defaultCB = NewCircuitBreaker[bool](Settings{})
-	customCB = newCustom()
-	rollingCB = newRollingWindow()
 }
 
 func TestStateConstants(t *testing.T) {
@@ -137,7 +129,8 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, defaultCB.Counts())
 	assert.True(t, defaultCB.expiry.IsZero())
 
-	customCB := newCustom()
+	var stateChange StateChange
+	customCB := newCustom(&stateChange)
 	assert.Equal(t, "cb", customCB.name)
 	assert.Equal(t, uint32(3), customCB.maxRequests)
 	assert.Equal(t, time.Duration(30)*time.Second, customCB.interval)
@@ -148,14 +141,14 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.Counts())
 	assert.False(t, customCB.expiry.IsZero())
 
-	rollingWindowCB := newRollingWindow()
+	rollingWindowCB := newRollingWindow(nil)
 	assert.Equal(t, "rw", rollingWindowCB.name)
 	assert.Equal(t, uint32(3), rollingWindowCB.maxRequests)
 	assert.Equal(t, time.Duration(30)*time.Second, rollingWindowCB.interval)
 	assert.Equal(t, 10, len(rollingWindowCB.counts.buckets))
 	assert.Equal(t, time.Duration(90)*time.Second, rollingWindowCB.timeout)
 	assert.NotNil(t, rollingWindowCB.readyToTrip)
-	assert.NotNil(t, rollingWindowCB.onStateChange)
+	assert.Nil(t, rollingWindowCB.onStateChange)
 	assert.Equal(t, StateClosed, rollingWindowCB.state)
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, rollingWindowCB.Counts())
 	assert.True(t, rollingWindowCB.expiry.IsZero())
@@ -173,6 +166,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 }
 
 func TestDefaultCircuitBreaker(t *testing.T) {
+	defaultCB := NewCircuitBreaker[bool](Settings{})
 	assert.Equal(t, "", defaultCB.Name())
 
 	for i := 0; i < 5; i++ {
@@ -228,6 +222,8 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 }
 
 func TestCustomCircuitBreaker(t *testing.T) {
+	var stateChange StateChange
+	customCB := newCustom(&stateChange)
 	assert.Equal(t, "cb", customCB.Name())
 
 	for i := 0; i < 5; i++ {
@@ -258,7 +254,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	// StateOpen to StateHalfOpen
 	pseudoSleep(customCB, time.Duration(90)*time.Second)
 	assert.Equal(t, StateHalfOpen, customCB.State())
-	assert.True(t, defaultCB.expiry.IsZero())
+	assert.True(t, customCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
 
 	assert.Nil(t, succeed(customCB))
@@ -279,6 +275,8 @@ func TestCustomCircuitBreaker(t *testing.T) {
 }
 
 func TestRollingWindowCircuitBreaker(t *testing.T) {
+	var stateChange StateChange
+	rollingCB := newRollingWindow(&stateChange)
 	assert.Equal(t, "rw", rollingCB.Name())
 
 	for i := 0; i < 5; i++ {
@@ -381,11 +379,13 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 }
 
 func TestPanicInRequest(t *testing.T) {
+	defaultCB := NewCircuitBreaker[bool](Settings{})
 	assert.Panics(t, func() { _ = causePanic(defaultCB) })
 	assert.Equal(t, Counts{1, 0, 1, 0, 1}, defaultCB.Counts())
 }
 
 func TestGeneration(t *testing.T) {
+	customCB := newCustom(nil)
 	pseudoSleep(customCB, time.Duration(29)*time.Second)
 	assert.Nil(t, succeed(customCB))
 	ch := succeedLater(customCB, time.Duration(1500)*time.Millisecond)
@@ -428,6 +428,7 @@ func TestCustomIsSuccessful(t *testing.T) {
 func TestCircuitBreakerInParallel(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
+	customCB := newCustom(nil)
 	ch := make(chan error)
 
 	const numReqs = 10000
@@ -451,6 +452,7 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 }
 
 func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
+	rollingCB := newRollingWindow(nil)
 	const numGoroutines = 10
 	const numRequests = 100
 
