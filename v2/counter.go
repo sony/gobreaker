@@ -8,6 +8,7 @@ type Counts struct {
 	Requests             uint32
 	TotalSuccesses       uint32
 	TotalFailures        uint32
+	TotalExcludes        uint32
 	ConsecutiveSuccesses uint32
 	ConsecutiveFailures  uint32
 }
@@ -28,12 +29,17 @@ func (c *Counts) onFailure() {
 	c.ConsecutiveSuccesses = 0
 }
 
+func (c *Counts) onExclude() {
+	c.TotalExcludes++
+}
+
 func (c *Counts) clear() {
 	c.Requests = 0
 	c.TotalSuccesses = 0
 	c.TotalFailures = 0
 	c.ConsecutiveSuccesses = 0
 	c.ConsecutiveFailures = 0
+	c.TotalExcludes = 0
 }
 
 type rollingCounts struct {
@@ -66,6 +72,17 @@ func (rc *rollingCounts) current() uint64 {
 func (rc *rollingCounts) onRequest() {
 	rc.Counts.onRequest()
 	rc.buckets[rc.current()].onRequest()
+}
+
+func (rc *rollingCounts) onExclude(age uint64) {
+	if age > rc.age {
+		return
+	}
+
+	if rc.age-age < uint64(len(rc.buckets)) {
+		rc.Counts.onExclude()
+		rc.buckets[rc.index(age)].onExclude()
+	}
 }
 
 func (rc *rollingCounts) onSuccess(age uint64) {
@@ -162,6 +179,12 @@ func (rc *rollingCounts) subtract(oldest uint64) {
 		rc.TotalFailures -= bucket.TotalFailures
 	} else {
 		rc.TotalFailures = 0
+	}
+
+	if rc.TotalExcludes > bucket.TotalExcludes {
+		rc.TotalExcludes -= bucket.TotalExcludes
+	} else {
+		rc.TotalExcludes = 0
 	}
 }
 
