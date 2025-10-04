@@ -13,7 +13,7 @@ import (
 
 type Store struct {
 	ctx    context.Context
-	client *redis.Client
+	client redis.UniversalClient
 	rs     *redsync.Redsync
 	mutex  map[string]*redsync.Mutex
 }
@@ -30,7 +30,7 @@ func NewStore(addr string) gobreaker.SharedDataStore {
 	}
 }
 
-func NewStoreFromClient(client *redis.Client) gobreaker.SharedDataStore {
+func NewStoreFromClient(client redis.UniversalClient) gobreaker.SharedDataStore {
 	return &Store{
 		ctx:    context.Background(),
 		client: client,
