@@ -19,6 +19,27 @@ const (
 	StateOpen
 )
 
+// evaluatedOutcome represents the result of evaluating a request
+// for the circuit breaker. It is used to update the breaker metrics.
+//
+// This is a tri-state enum that categorizes requests as:
+//   - Success: the request succeeded and should be counted toward breaker metrics.
+//   - Failure: the request failed and should be counted toward breaker metrics.
+//   - Excluded: the request outcome should be ignored (e.g., context canceled or
+//     other user-defined conditions) and should not affect breaker metrics.
+type evaluatedOutcome int
+
+const (
+	Excluded evaluatedOutcome = iota // request outcome cannot be determined or is exclude
+	Success                          // request succeeded
+	Failure                          // request failed
+)
+
+// outcomeEvaluator defines a function that maps an error returned by a request
+// to an EvaluatedOutcome. It is used internally by the circuit breaker to decide
+// whether a request should count as Success, Failure, or be Undetermined.
+type outcomeEvaluator func(err error) evaluatedOutcome
+
 var (
 	// ErrTooManyRequests is returned when the CB state is half open and the requests count is over the cb maxRequests
 	ErrTooManyRequests = errors.New("too many requests")
@@ -50,6 +71,7 @@ type Counts struct {
 	TotalFailures        uint32
 	ConsecutiveSuccesses uint32
 	ConsecutiveFailures  uint32
+	TotalExcludes        uint32
 }
 
 func (c *Counts) onRequest() {
@@ -68,12 +90,17 @@ func (c *Counts) onFailure() {
 	c.ConsecutiveSuccesses = 0
 }
 
+func (c *Counts) onExclude() {
+	c.TotalExcludes++
+}
+
 func (c *Counts) clear() {
 	c.Requests = 0
 	c.TotalSuccesses = 0
 	c.TotalFailures = 0
 	c.ConsecutiveSuccesses = 0
 	c.ConsecutiveFailures = 0
+	c.TotalExcludes = 0
 }
 
 // Settings configures CircuitBreaker:
@@ -103,6 +130,14 @@ func (c *Counts) clear() {
 // If IsSuccessful returns true, the error is counted as a success.
 // Otherwise the error is counted as a failure.
 // If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
+//
+// Exclude is an optional function that determines whether a request's error
+// should be ignored for the purposes of updating the circuit breaker metrics.
+// If Exclude returns true for a given error, the request is considered
+// Undetermined and does not count toward Success or Failure counts.
+// This can be used, for example, to ignore context cancellations or other
+// errors that should not affect the circuit breaker state.
+// If Exclude is nil, no requests are excluded by default.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -111,17 +146,18 @@ type Settings struct {
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
+	Exclude       func(err error) bool
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
 type CircuitBreaker struct {
-	name          string
-	maxRequests   uint32
-	interval      time.Duration
-	timeout       time.Duration
-	readyToTrip   func(counts Counts) bool
-	isSuccessful  func(err error) bool
-	onStateChange func(name string, from State, to State)
+	name             string
+	maxRequests      uint32
+	interval         time.Duration
+	timeout          time.Duration
+	readyToTrip      func(counts Counts) bool
+	onStateChange    func(name string, from State, to State)
+	outcomeEvaluator outcomeEvaluator
 
 	mutex      sync.Mutex
 	state      State
@@ -168,15 +204,47 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 		cb.readyToTrip = st.ReadyToTrip
 	}
 
-	if st.IsSuccessful == nil {
-		cb.isSuccessful = defaultIsSuccessful
-	} else {
-		cb.isSuccessful = st.IsSuccessful
-	}
+	cb.outcomeEvaluator = outcomeEvaluatorFunc(st)
 
 	cb.toNewGeneration(time.Now())
 
 	return cb
+}
+
+// outcomeEvaluatorFunc composes an OutcomeEvaluator from the provided Settings.
+//
+// It returns a function that maps an error returned by a request to an EvaluatedOutcome
+// (Success, Failure, or Undetermined) based on the following logic:
+//
+//  1. If the error satisfies st.Exclude (user-defined), it is considered Undetermined
+//     and does not count toward circuit breaker metrics.
+//  2. Otherwise, if st.IsSuccessful returns true, the request is counted as Success.
+//  3. Otherwise, the request is counted as Failure.
+//
+// If either st.Exclude or st.IsSuccessful is nil, default functions are used:
+//   - defaultExclude: never excludes any errors.
+//   - defaultIsSuccessful: considers nil error as success, non-nil as failure.
+func outcomeEvaluatorFunc(st Settings) outcomeEvaluator {
+	exclude := st.Exclude
+	isSuccessful := st.IsSuccessful
+
+	// Defaults if user did not provide functions
+	if exclude == nil {
+		exclude = defaultExclude
+	}
+	if isSuccessful == nil {
+		isSuccessful = defaultIsSuccessful
+	}
+
+	return func(err error) evaluatedOutcome {
+		if exclude(err) {
+			return Excluded
+		}
+		if isSuccessful(err) {
+			return Success
+		}
+		return Failure
+	}
 }
 
 // NewTwoStepCircuitBreaker returns a new TwoStepCircuitBreaker configured with the given Settings.
@@ -195,6 +263,10 @@ func defaultReadyToTrip(counts Counts) bool {
 
 func defaultIsSuccessful(err error) bool {
 	return err == nil
+}
+
+func defaultExclude(_ error) bool {
+	return false
 }
 
 // Name returns the name of the CircuitBreaker.
@@ -234,13 +306,13 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, false)
+			cb.afterRequest(generation, Failure)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, cb.isSuccessful(err))
+	cb.afterRequest(generation, cb.outcomeEvaluator(err))
 	return result, err
 }
 
@@ -262,14 +334,14 @@ func (tscb *TwoStepCircuitBreaker) Counts() Counts {
 // Allow checks if a new request can proceed. It returns a callback that should be used to
 // register the success or failure in a separate step. If the circuit breaker doesn't allow
 // requests, it returns an error.
-func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
+func (tscb *TwoStepCircuitBreaker) Allow() (done func(evaluation evaluatedOutcome), err error) {
 	generation, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	return func(success bool) {
-		tscb.cb.afterRequest(generation, success)
+	return func(evaluation evaluatedOutcome) {
+		tscb.cb.afterRequest(generation, evaluation)
 	}, nil
 }
 
@@ -282,7 +354,8 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 
 	if state == StateOpen {
 		return generation, ErrOpenState
-	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
+	} else if state == StateHalfOpen &&
+		(cb.counts.Requests-cb.counts.TotalExcludes) >= cb.maxRequests {
 		return generation, ErrTooManyRequests
 	}
 
@@ -290,7 +363,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
+func (cb *CircuitBreaker) afterRequest(before uint64, evaluation evaluatedOutcome) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
@@ -300,11 +373,18 @@ func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 		return
 	}
 
-	if success {
+	switch evaluation {
+	case Success:
 		cb.onSuccess(state, now)
-	} else {
+	case Failure:
 		cb.onFailure(state, now)
+	default:
+		cb.onExclude()
 	}
+}
+
+func (cb *CircuitBreaker) onExclude() {
+	cb.counts.onExclude()
 }
 
 func (cb *CircuitBreaker) onSuccess(state State, now time.Time) {
