@@ -356,7 +356,8 @@ func (cb *CircuitBreaker) setState(state State, now time.Time) {
 	cb.toNewGeneration(now)
 
 	if cb.onStateChange != nil {
-		cb.onStateChange(cb.name, prev, state)
+		go cb.onStateChange(cb.name, prev, state)
+		runtime.Gosched()
 	}
 }
 
