@@ -140,7 +140,7 @@ func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	assert.Equal(t, ErrOpenState, err)
 
 	// Wait for timeout so that the state will move to half-open
-	dcbPseudoSleep(dcb, dcb.timeout+time.Second)
+	dcbPseudoSleep(dcb, dcb.timeout+time.Nanosecond)
 	assertState(t, dcb, StateHalfOpen)
 
 	// StateHalfOpen to StateClosed
@@ -230,7 +230,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		assert.Equal(t, Counts{Requests: 11, TotalSuccesses: 6, TotalFailures: 5, ConsecutiveSuccesses: 1}, state.Counts)
 
 		// Simulate time passing to reset counts
-		dcbPseudoSleep(customDCB, time.Second*31)
+		dcbPseudoSleep(customDCB, customDCB.interval+time.Nanosecond)
 
 		// Perform requests to trigger StateOpen
 		assert.NoError(t, successRequest(customDCB))
@@ -247,7 +247,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 
 	t.Run("Timeout and Half-Open State", func(t *testing.T) {
 		// Simulate timeout to transition to half-open state
-		dcbPseudoSleep(customDCB, time.Second*91)
+		dcbPseudoSleep(customDCB, customDCB.timeout+time.Nanosecond)
 		assertState(t, customDCB, StateHalfOpen)
 
 		// Successful requests in half-open state should close the circuit
@@ -299,7 +299,7 @@ func TestCustomDistributedCircuitBreakerStateTransitions(t *testing.T) {
 		assert.Equal(t, ErrOpenState, err)
 
 		// Simulate timeout to transition to Half-Open
-		dcbPseudoSleep(dcb, 6*time.Second)
+		dcbPseudoSleep(dcb, dcb.timeout+time.Nanosecond)
 		assertState(t, dcb, StateHalfOpen)
 		assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
 
