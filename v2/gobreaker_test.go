@@ -213,7 +213,7 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateOpen, defaultCB.State())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(defaultCB, defaultCB.timeout+time.Second) // over Timeout
+	pseudoSleep(defaultCB, time.Second) // over Timeout
 	assert.Equal(t, StateHalfOpen, defaultCB.State())
 	assert.True(t, defaultCB.expiry.IsZero())
 
