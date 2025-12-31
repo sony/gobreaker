@@ -186,7 +186,7 @@ func (rc *rollingCounts) subtract(oldest uint64) {
 	} else {
 		rc.TotalExclusions = 0
 	}
-}	
+}
 
 func (rc *rollingCounts) grow(age uint64) {
 	if age <= rc.age {
