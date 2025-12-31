@@ -290,7 +290,7 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
 	if state == StateOpen {
 		return generation, age, ErrOpenState
 	} else if state == StateHalfOpen &&
-		(cb.counts.Requests-cb.counts.TotalExcludes) >= cb.maxRequests {
+		(cb.counts.Requests-cb.counts.TotalExclusions) >= cb.maxRequests {
 		return generation, age, ErrTooManyRequests
 	}
 
@@ -314,12 +314,12 @@ func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, evaluatio
 	case Failure:
 		cb.onFailure(state, age, now)
 	default:
-		cb.onExclude(age)
+		cb.onExclusion(age)
 	}
 }
 
-func (cb *CircuitBreaker[T]) onExclude(age uint64) {
-	cb.counts.onExclude(age)
+func (cb *CircuitBreaker[T]) onExclusion(age uint64) {
+	cb.counts.onExclusion(age)
 }
 
 func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {
@@ -355,7 +355,7 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 			cb.counts.grow(cb.age(now))
 		}
 	case StateOpen:
-		if cb.expiry.Before(now) {
+		if !cb.expiry.After(now) {
 			cb.setState(StateHalfOpen, now)
 		}
 	}

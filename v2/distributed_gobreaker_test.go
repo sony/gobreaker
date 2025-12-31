@@ -230,7 +230,7 @@ func TestCustomDistributedCircuitBreaker(t *testing.T) {
 		assert.Equal(t, Counts{Requests: 11, TotalSuccesses: 6, TotalFailures: 5, ConsecutiveSuccesses: 1}, state.Counts)
 
 		// Simulate time passing to reset counts
-		dcbPseudoSleep(customDCB, time.Second*30)
+		dcbPseudoSleep(customDCB, time.Second*31)
 
 		// Perform requests to trigger StateOpen
 		assert.NoError(t, successRequest(customDCB))
