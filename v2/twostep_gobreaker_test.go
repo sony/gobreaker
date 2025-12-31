@@ -1,6 +1,7 @@
 package gobreaker
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ func succeed2Step(cb *TwoStepCircuitBreaker[bool]) error {
 		return err
 	}
 
-	done(Success)
+	done(nil)
 	return nil
 }
 
@@ -23,7 +24,7 @@ func fail2Step(cb *TwoStepCircuitBreaker[bool]) error {
 		return err
 	}
 
-	done(Failure)
+	done(errors.New("failed"))
 	return nil
 }
 
@@ -33,7 +34,7 @@ func exclude2step(cb *TwoStepCircuitBreaker[bool]) error {
 		return err
 	}
 
-	done(Excluded)
+	done(errors.New("excluded"))
 	return nil
 }
 
@@ -45,7 +46,7 @@ func exclude2StepWithDoneDelay(cb *TwoStepCircuitBreaker[bool], delay time.Durat
 
 	go func() {
 		time.Sleep(delay)
-		defer done(Excluded)
+		defer done(errors.New("excluded"))
 	}()
 
 	return nil
@@ -87,7 +88,7 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateOpen, tscb.State())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(1)*time.Second) // over Timeout
+	pseudoSleep(tscb.cb, time.Duration(2)*time.Second) // over Timeout
 	assert.Equal(t, StateHalfOpen, tscb.State())
 	assert.True(t, tscb.cb.expiry.IsZero())
 
@@ -99,7 +100,7 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.Equal(t, ErrTooManyRequests, fail2Step(tscb))
 	assert.Equal(t, ErrTooManyRequests, succeed2Step(tscb))
 	// Wait for excluded requests to complete
-	time.Sleep(110 * time.Millisecond)
+	time.Sleep(time.Second)
 	// Now circuit breaker should accept requests again
 	assert.Nil(t, succeed2Step(tscb))
 
@@ -110,7 +111,7 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.False(t, tscb.cb.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(60)*time.Second)
+	pseudoSleep(tscb.cb, time.Duration(61)*time.Second)
 	assert.Equal(t, StateHalfOpen, tscb.State())
 	assert.True(t, tscb.cb.expiry.IsZero())
 

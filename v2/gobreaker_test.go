@@ -84,7 +84,7 @@ func newCustom(stateChange *StateChange) *CircuitBreaker[bool] {
 			*stateChange = StateChange{name, from, to}
 		}
 	}
-	customSt.Exclude = func(err error) bool {
+	customSt.IsExcluded = func(err error) bool {
 		return errors.Is(err, errExcluded)
 	}
 
@@ -109,7 +109,7 @@ func newRollingWindow(stateChange *StateChange) *CircuitBreaker[bool] {
 			*stateChange = StateChange{name, from, to}
 		}
 	}
-	rollingWindowSt.Exclude = func(err error) bool {
+	rollingWindowSt.IsExcluded = func(err error) bool {
 		return errors.Is(err, errExcluded)
 	}
 
@@ -229,7 +229,7 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	assert.False(t, defaultCB.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(defaultCB, time.Duration(60)*time.Second)
+	pseudoSleep(defaultCB, time.Duration(61)*time.Second)
 	assert.Equal(t, StateHalfOpen, defaultCB.State())
 	assert.True(t, defaultCB.expiry.IsZero())
 
@@ -258,7 +258,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{Requests: 16, TotalSuccesses: 6, TotalFailures: 5, ConsecutiveSuccesses: 1, TotalExclusions: 5}, customCB.Counts())
 
-	pseudoSleep(customCB, time.Duration(1)*time.Second) // over Interval
+	pseudoSleep(customCB, time.Duration(2)*time.Second) // over Interval
 	assert.Nil(t, fail(customCB))
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{Requests: 1, TotalFailures: 1, ConsecutiveFailures: 1}, customCB.Counts())
@@ -272,7 +272,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"cb", StateClosed, StateOpen}, stateChange)
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(customCB, time.Duration(90)*time.Second)
+	pseudoSleep(customCB, time.Duration(91)*time.Second)
 	assert.Equal(t, StateHalfOpen, customCB.State())
 	assert.True(t, customCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
@@ -297,7 +297,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"cb", StateHalfOpen, StateOpen}, stateChange)
 
 	// Transition: Open → Half-Open (after timeout expires).
-	pseudoSleep(customCB, time.Duration(90)*time.Second)
+	pseudoSleep(customCB, time.Duration(91)*time.Second)
 	assert.Equal(t, StateHalfOpen, customCB.State())
 
 	// Successes increment counters but do not
@@ -410,7 +410,7 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"rw", StateClosed, StateOpen}, stateChange)
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(rollingCB, time.Duration(90)*time.Second)
+	pseudoSleep(rollingCB, time.Duration(91)*time.Second)
 	assert.Equal(t, StateHalfOpen, rollingCB.State())
 	assert.True(t, rollingCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"rw", StateOpen, StateHalfOpen}, stateChange)
@@ -469,9 +469,9 @@ func TestCustomIsSuccessful(t *testing.T) {
 
 	cb.counts.clear()
 
-	cb.outcomeEvaluator = outcomeEvaluatorFunc(Settings{
-		IsSuccessful: func(err error) bool { return err == nil },
-	})
+	cb.isSuccessful = func(err error) bool {
+		return err == nil
+	}
 
 	for i := 0; i < 6; i++ {
 		assert.Nil(t, fail(cb))
@@ -521,7 +521,7 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 
 func TestExcludeAndIsSuccessfulCombination(t *testing.T) {
 	cb := NewCircuitBreaker[bool](Settings{
-		Exclude: func(err error) bool {
+		IsExcluded: func(err error) bool {
 			return errors.Is(err, errExcluded)
 		},
 		IsSuccessful: func(err error) bool {
