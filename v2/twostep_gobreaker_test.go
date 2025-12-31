@@ -34,26 +34,36 @@ func exclude2step(cb *TwoStepCircuitBreaker[bool]) error {
 		return err
 	}
 
-	done(errors.New("excluded"))
+	done(errExcluded)
 	return nil
 }
 
-func exclude2StepWithDoneDelay(cb *TwoStepCircuitBreaker[bool], delay time.Duration) error {
+func exclude2StepWithDelay(cb *TwoStepCircuitBreaker[bool]) (chan struct{}, error) {
 	done, err := cb.Allow()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	finished := make(chan struct{})
 	go func() {
-		time.Sleep(delay)
-		defer done(errors.New("excluded"))
+		time.Sleep(100 * time.Millisecond)
+		done(errExcluded)
+		close(finished)
 	}()
 
-	return nil
+	return finished, nil
 }
 
 func TestTwoStepCircuitBreaker(t *testing.T) {
-	tscb := NewTwoStepCircuitBreaker[bool](Settings{Name: "tscb", MaxRequests: 2})
+	tscb := NewTwoStepCircuitBreaker[bool](
+		Settings{
+			Name:        "tscb",
+			MaxRequests: 2,
+			IsExcluded: func(err error) bool {
+				return errors.Is(err, errExcluded)
+			},
+		},
+	)
 	assert.Equal(t, "tscb", tscb.Name())
 
 	for i := 0; i < 5; i++ {
@@ -88,20 +98,24 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateOpen, tscb.State())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(2)*time.Second) // over Timeout
+	pseudoSleep(tscb.cb, time.Duration(2)*time.Second) // over timeout
 	assert.Equal(t, StateHalfOpen, tscb.State())
 	assert.True(t, tscb.cb.expiry.IsZero())
 
-	// In half-open state, when max requests are in progress, others get ErrTooManyRequests
-	// But if in-progress requests complete with Excluded, circuit breaker can accept requests again
-	assert.Nil(t, exclude2StepWithDoneDelay(tscb, 100*time.Millisecond))
-	assert.Nil(t, exclude2StepWithDoneDelay(tscb, 100*time.Millisecond))
-	// Verify new requests are rejected while at capacity
-	assert.Equal(t, ErrTooManyRequests, fail2Step(tscb))
+	// in half-open state, when max number of requests are in progress,
+	// others get rejected because of too many requests
+	// but if in-progress requests complete with excluded, circuit breaker can accept requests again
+	ch1, err := exclude2StepWithDelay(tscb)
+	assert.Nil(t, err)
+	ch2, err := exclude2StepWithDelay(tscb)
+	assert.Nil(t, err)
+	// rejected because of too many requests
 	assert.Equal(t, ErrTooManyRequests, succeed2Step(tscb))
-	// Wait for excluded requests to complete
-	time.Sleep(time.Second)
-	// Now circuit breaker should accept requests again
+	assert.Equal(t, ErrTooManyRequests, fail2Step(tscb))
+	// wait for excluded requests to complete
+	<-ch1
+	<-ch2
+	// now circuit breaker should accept requests again
 	assert.Nil(t, succeed2Step(tscb))
 
 	// StateHalfOpen to StateOpen

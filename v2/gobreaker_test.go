@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	errFailure  = errors.New("fail")
+	errFailure  = errors.New("failed")
 	errExcluded = errors.New("excluded")
 )
 
