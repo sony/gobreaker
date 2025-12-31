@@ -1,4 +1,4 @@
-// Package gobreaker implements the Circuit Breaker pattern.
+﻿// Package gobreaker implements the Circuit Breaker pattern.
 // See https://msdn.microsoft.com/en-us/library/dn589784.aspx.
 package gobreaker
 
@@ -18,24 +18,6 @@ const (
 	StateHalfOpen
 	StateOpen
 )
-
-// evaluatedOutcome represents the result of evaluating a request
-// for the circuit breaker. It is used to update the breaker metrics.
-//
-// This is a bi-state enum that categorizes requests as:
-//   - Success: the request succeeded and should be counted toward breaker metrics.
-//   - Failure: the request failed and should be counted toward breaker metrics.
-type evaluatedOutcome int
-
-const (
-	Success evaluatedOutcome = iota // request succeeded
-	Failure                         // request failed
-)
-
-// outcomeEvaluator defines a function that maps an error returned by a request
-// to an EvaluatedOutcome. It is used internally by the circuit breaker to decide
-// whether a request should count as Success or Failure.
-type outcomeEvaluator func(err error) evaluatedOutcome
 
 var (
 	// ErrTooManyRequests is returned when the CB state is half open and the requests count is over the cb maxRequests
@@ -133,13 +115,13 @@ type Settings struct {
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
 type CircuitBreaker struct {
-	name             string
-	maxRequests      uint32
-	interval         time.Duration
-	timeout          time.Duration
-	readyToTrip      func(counts Counts) bool
-	onStateChange    func(name string, from State, to State)
-	outcomeEvaluator outcomeEvaluator
+	name          string
+	maxRequests   uint32
+	interval      time.Duration
+	timeout       time.Duration
+	readyToTrip   func(counts Counts) bool
+	isSuccessful  func(err error) bool
+	onStateChange func(name string, from State, to State)
 
 	mutex      sync.Mutex
 	state      State
@@ -186,37 +168,15 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 		cb.readyToTrip = st.ReadyToTrip
 	}
 
-	cb.outcomeEvaluator = outcomeEvaluatorFunc(st)
+	if st.IsSuccessful == nil {
+		cb.isSuccessful = defaultIsSuccessful
+	} else {
+		cb.isSuccessful = st.IsSuccessful
+	}
 
 	cb.toNewGeneration(time.Now())
 
 	return cb
-}
-
-// outcomeEvaluatorFunc composes an OutcomeEvaluator from the provided Settings.
-//
-// It returns a function that maps an error returned by a request to an EvaluatedOutcome
-// (Success or Failure) based on the following logic:
-//
-//  1. If st.IsSuccessful returns true, the request is counted as Success.
-//  2. Otherwise, the request is counted as Failure.
-//
-// If st.IsSuccessful is nil, default IsSuccessful is used, which considers
-// nil error as success, non-nil as failure.
-func outcomeEvaluatorFunc(st Settings) outcomeEvaluator {
-	isSuccessful := st.IsSuccessful
-
-	// Default if user did not provide function
-	if isSuccessful == nil {
-		isSuccessful = defaultIsSuccessful
-	}
-
-	return func(err error) evaluatedOutcome {
-		if isSuccessful(err) {
-			return Success
-		}
-		return Failure
-	}
 }
 
 // NewTwoStepCircuitBreaker returns a new TwoStepCircuitBreaker configured with the given Settings.
@@ -274,13 +234,13 @@ func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{},
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, Failure)
+			cb.afterRequest(generation, false)
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, cb.outcomeEvaluator(err))
+	cb.afterRequest(generation, cb.isSuccessful(err))
 	return result, err
 }
 
@@ -302,14 +262,14 @@ func (tscb *TwoStepCircuitBreaker) Counts() Counts {
 // Allow checks if a new request can proceed. It returns a callback that should be used to
 // register the success or failure in a separate step. If the circuit breaker doesn't allow
 // requests, it returns an error.
-func (tscb *TwoStepCircuitBreaker) Allow() (done func(evaluation evaluatedOutcome), err error) {
+func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
 	generation, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	return func(evaluation evaluatedOutcome) {
-		tscb.cb.afterRequest(generation, evaluation)
+	return func(success bool) {
+		tscb.cb.afterRequest(generation, success)
 	}, nil
 }
 
@@ -322,8 +282,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 
 	if state == StateOpen {
 		return generation, ErrOpenState
-	} else if state == StateHalfOpen &&
-		cb.counts.Requests >= cb.maxRequests {
+	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
 		return generation, ErrTooManyRequests
 	}
 
@@ -331,7 +290,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequest(before uint64, evaluation evaluatedOutcome) {
+func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
@@ -341,10 +300,9 @@ func (cb *CircuitBreaker) afterRequest(before uint64, evaluation evaluatedOutcom
 		return
 	}
 
-	switch evaluation {
-	case Success:
+	if success {
 		cb.onSuccess(state, now)
-	case Failure:
+	} else {
 		cb.onFailure(state, now)
 	}
 }
