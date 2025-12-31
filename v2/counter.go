@@ -33,6 +33,13 @@ func (c *Counts) onExclusion() {
 	c.TotalExclusions++
 }
 
+func (c *Counts) validRequests() uint32 {
+	if c.Requests < c.TotalExclusions　{
+		return 0
+	}
+	return c.Requests - c.TotalExclusions
+}
+
 func (c *Counts) clear() {
 	c.Requests = 0
 	c.TotalSuccesses = 0
