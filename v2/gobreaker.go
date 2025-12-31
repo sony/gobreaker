@@ -243,8 +243,7 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
 
 	if state == StateOpen {
 		return generation, age, ErrOpenState
-	} else if state == StateHalfOpen &&
-		(cb.counts.Requests-cb.counts.TotalExclusions) >= cb.maxRequests {
+	} else if state == StateHalfOpen && cb.counts.validRequests() >= cb.maxRequests {
 		return generation, age, ErrTooManyRequests
 	}
 
