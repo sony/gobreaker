@@ -14,8 +14,7 @@ var defaultCB *CircuitBreaker
 var customCB *CircuitBreaker
 
 var (
-	errFailure  = errors.New("fail")
-	errExcluded = errors.New("excluded")
+	errFailure = errors.New("fail")
 )
 
 type StateChange struct {
@@ -77,27 +76,6 @@ func fail2Step(cb *TwoStepCircuitBreaker) error {
 	return nil
 }
 
-func exclude2StepWithDoneDelay(cb *TwoStepCircuitBreaker, delay time.Duration) error {
-	done, err := cb.Allow()
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		time.Sleep(delay)
-		defer done(Excluded)
-	}()
-
-	return nil
-}
-
-func exclude(cb *CircuitBreaker) error {
-	_, err := cb.Execute(func() (interface{}, error) { return false, errExcluded })
-	if errors.Is(err, errExcluded) {
-		return nil
-	}
-	return err
-}
 
 func causePanic(cb *CircuitBreaker) error {
 	_, err := cb.Execute(func() (interface{}, error) { panic("oops") })
@@ -111,18 +89,14 @@ func newCustom() *CircuitBreaker {
 	customSt.Interval = time.Duration(30) * time.Second
 	customSt.Timeout = time.Duration(90) * time.Second
 	customSt.ReadyToTrip = func(counts Counts) bool {
-		numReqs := counts.Requests - counts.TotalExcludes
-		failureRatio := float64(counts.TotalFailures) / float64(numReqs)
+		failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
 
 		counts.clear() // no effect on customCB.counts
 
-		return numReqs >= 3 && failureRatio >= 0.6
+		return counts.Requests >= 3 && failureRatio >= 0.6
 	}
 	customSt.OnStateChange = func(name string, from State, to State) {
 		stateChange = StateChange{name, from, to}
-	}
-	customSt.Exclude = func(err error) bool {
-		return errors.Is(err, errExcluded)
 	}
 
 	return NewCircuitBreaker(customSt)
@@ -277,16 +251,6 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.True(t, defaultCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
 
-	// Excluded requests are neutral in Half-Open state.
-	// They do not affect breaker counts or state transitions.
-	// The condition to stay within MaxRequests should be evaluated as:
-	//   (cb.counts.Requests - cb.counts.TotalExcludes) < cb.maxRequests
-	// This ensures excluded requests don’t cause premature errors.
-	assert.Nil(t, exclude(customCB))
-	assert.Nil(t, exclude(customCB))
-	assert.Nil(t, exclude(customCB))
-	assert.Nil(t, exclude(customCB))
-	assert.Equal(t, StateHalfOpen, customCB.State())
 
 	// Transition: Half-Open → Open
 	// In Half-Open, the first real failure immediately re-opens the breaker.
@@ -359,16 +323,8 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.True(t, tscb.cb.expiry.IsZero())
 
 	// In half-open state, when max requests are in progress, others get ErrTooManyRequests
-	// But if in-progress requests complete with Excluded, circuit breaker can accept requests again
-	assert.Nil(t, exclude2StepWithDoneDelay(tscb, 100*time.Millisecond))
-	assert.Nil(t, exclude2StepWithDoneDelay(tscb, 100*time.Millisecond))
-	// Verify new requests are rejected while at capacity
 	assert.Equal(t, ErrTooManyRequests, fail2Step(tscb))
 	assert.Equal(t, ErrTooManyRequests, succeed2Step(tscb))
-	// Wait for excluded requests to complete
-	time.Sleep(110 * time.Millisecond)
-	// Now circuit breaker should accept requests again
-	assert.Nil(t, succeed2Step(tscb))
 
 	// StateHalfOpen to StateOpen
 	assert.Nil(t, fail2Step(tscb))
@@ -435,55 +391,19 @@ func TestCustomIsSuccessful(t *testing.T) {
 
 }
 
-func TestExcludeAndIsSuccessfulCombination(t *testing.T) {
-	cb := NewCircuitBreaker(Settings{
-		Exclude: func(err error) bool {
-			return errors.Is(err, errExcluded)
-		},
-		IsSuccessful: func(err error) bool {
-			return err == nil
-		},
-	})
-
-	// Case 1: excluded error -> should be Undetermined (not counted)
-	for i := 0; i < 3; i++ {
-		assert.Nil(t, exclude(cb))
-	}
-	assert.Equal(t, Counts{Requests: 3, TotalExcludes: 3}, cb.Counts(), "excluded errors must not be counted as success or failure")
-
-	// Case 2: nil error -> IsSuccessful says "success"
-	for i := 0; i < 3; i++ {
-		assert.Nil(t, succeed(cb))
-	}
-	assert.Equal(t, Counts{Requests: 6, TotalSuccesses: 3, ConsecutiveSuccesses: 3, TotalExcludes: 3}, cb.Counts(), "errors should be counted as success per IsSuccessful")
-
-	// Case 3: nil error -> IsSuccessful says failure
-	for i := 0; i < 2; i++ {
-		assert.Nil(t, fail(cb))
-	}
-	assert.Equal(t, Counts{Requests: 8, TotalSuccesses: 3, TotalFailures: 2, ConsecutiveFailures: 2, TotalExcludes: 3}, cb.Counts(), "nil errors should be counted as failures per IsSuccessful")
-}
 
 func TestCircuitBreakerInParallel(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	ch := make(chan error)
 
-	var successCount, excludeCount atomic.Uint32
+	var successCount atomic.Uint32
 
 	const numReqs = 10000
 	routine := func() {
 		for i := 0; i < numReqs; i++ {
-			var err error
-			switch i % 2 {
-			case 0:
-				err = succeed(customCB)
-				successCount.Add(1)
-			case 1:
-				err = exclude(customCB)
-				excludeCount.Add(1)
-			}
-
+			err := succeed(customCB)
+			successCount.Add(1)
 			ch <- err
 		}
 	}
@@ -498,5 +418,5 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 		err := <-ch
 		assert.Nil(t, err)
 	}
-	assert.Equal(t, Counts{Requests: total, TotalSuccesses: successCount.Load(), ConsecutiveSuccesses: successCount.Load(), TotalExcludes: excludeCount.Load()}, customCB.Counts())
+	assert.Equal(t, Counts{Requests: total, TotalSuccesses: successCount.Load(), ConsecutiveSuccesses: successCount.Load()}, customCB.Counts())
 }
