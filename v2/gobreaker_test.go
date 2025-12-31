@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	errFailure  = errors.New("failed")
+	errFailed   = errors.New("failed")
 	errExcluded = errors.New("excluded")
 )
 
@@ -47,8 +47,8 @@ func succeedLater(cb *CircuitBreaker[bool], delay time.Duration) <-chan error {
 }
 
 func fail(cb *CircuitBreaker[bool]) error {
-	_, err := cb.Execute(func() (bool, error) { return false, errFailure })
-	if errors.Is(err, errFailure) {
+	_, err := cb.Execute(func() (bool, error) { return false, errFailed })
+	if errors.Is(err, errFailed) {
 		return nil
 	}
 	return err
