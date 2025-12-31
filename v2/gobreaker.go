@@ -73,13 +73,13 @@ func (s State) String() string {
 // Otherwise the error is counted as a failure.
 // If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
 //
-// IsExcluded is an optional function that determines whether a request's error
-// should be ignored for the purposes of updating the circuit breaker metrics.
-// If IsExcluded returns true for a given error, the request is considered
-// Undetermined and does not count toward Success or Failure counts.
-// This can be used, for example, to ignore context cancellations or other
-// errors that should not affect the circuit breaker state.
-// If IsExcluded is nil, no requests are excluded by default.
+// IsExcluded determines whether a request error should be ignored
+// for the purposes of updating the circuit breaker metrics.
+// If IsExcluded returns true for a given error,
+// the request is neither counted as a success nor as a failure.
+// This can be used, for example, to ignore context cancellations or
+// other errors that should not affect the circuit breaker state.
+// If IsExcluded is nil, no requests are excluded.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -274,10 +274,6 @@ func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, err error
 	}
 }
 
-func (cb *CircuitBreaker[T]) onExclusion(age uint64) {
-	cb.counts.onExclusion(age)
-}
-
 func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {
 	switch state {
 	case StateClosed:
@@ -300,6 +296,10 @@ func (cb *CircuitBreaker[T]) onFailure(state State, age uint64, now time.Time) {
 	case StateHalfOpen:
 		cb.setState(StateOpen, now)
 	}
+}
+
+func (cb *CircuitBreaker[T]) onExclusion(age uint64) {
+	cb.counts.onExclusion(age)
 }
 
 func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64) {
