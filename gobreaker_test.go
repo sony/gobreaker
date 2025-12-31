@@ -1,4 +1,4 @@
-﻿package gobreaker
+package gobreaker
 
 import (
 	"errors"
