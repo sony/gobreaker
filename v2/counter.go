@@ -34,7 +34,7 @@ func (c *Counts) onExclusion() {
 }
 
 func (c *Counts) validRequests() uint32 {
-	if c.Requests < c.TotalExclusions　{
+	if c.Requests < c.TotalExclusions {
 		return 0
 	}
 	return c.Requests - c.TotalExclusions
