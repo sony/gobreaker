@@ -209,11 +209,11 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	assert.Error(t, fail(defaultCB))
 	assert.Equal(t, Counts{}, defaultCB.Counts())
 
-	pseudoSleep(defaultCB, time.Duration(59)*time.Second)
+	pseudoSleep(defaultCB, defaultCB.timeout-time.Millisecond)
 	assert.Equal(t, StateOpen, defaultCB.State())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(defaultCB, time.Duration(2)*time.Second) // over Timeout
+	pseudoSleep(defaultCB, defaultCB.timeout+time.Second) // over Timeout
 	assert.Equal(t, StateHalfOpen, defaultCB.State())
 	assert.True(t, defaultCB.expiry.IsZero())
 
@@ -224,7 +224,7 @@ func TestDefaultCircuitBreaker(t *testing.T) {
 	assert.False(t, defaultCB.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(defaultCB, time.Duration(61)*time.Second)
+	pseudoSleep(defaultCB, defaultCB.timeout+time.Nanosecond)
 	assert.Equal(t, StateHalfOpen, defaultCB.State())
 	assert.True(t, defaultCB.expiry.IsZero())
 
@@ -248,12 +248,12 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{Requests: 15, TotalSuccesses: 5, TotalFailures: 5, TotalExclusions: 5, ConsecutiveFailures: 1}, customCB.Counts())
 
-	pseudoSleep(customCB, time.Duration(29)*time.Second)
+	pseudoSleep(customCB, customCB.interval-time.Millisecond)
 	assert.Nil(t, succeed(customCB))
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{Requests: 16, TotalSuccesses: 6, TotalFailures: 5, TotalExclusions: 5, ConsecutiveSuccesses: 1}, customCB.Counts())
 
-	pseudoSleep(customCB, time.Duration(2)*time.Second) // over Interval
+	pseudoSleep(customCB, time.Second) // over Interval
 	assert.Nil(t, fail(customCB))
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{Requests: 1, TotalFailures: 1, ConsecutiveFailures: 1}, customCB.Counts())
@@ -267,7 +267,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"cb", StateClosed, StateOpen}, stateChange)
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(customCB, time.Duration(91)*time.Second)
+	pseudoSleep(customCB, customCB.timeout+time.Nanosecond)
 	assert.Equal(t, StateHalfOpen, customCB.State())
 	assert.True(t, customCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"cb", StateOpen, StateHalfOpen}, stateChange)
@@ -292,7 +292,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"cb", StateHalfOpen, StateOpen}, stateChange)
 
 	// Transition: Open → Half-Open (after timeout expires).
-	pseudoSleep(customCB, time.Duration(91)*time.Second)
+	pseudoSleep(customCB, customCB.timeout+time.Nanosecond)
 	assert.Equal(t, StateHalfOpen, customCB.State())
 
 	// Successes increment counters but do not
@@ -405,7 +405,7 @@ func TestRollingWindowCircuitBreaker(t *testing.T) {
 	assert.Equal(t, StateChange{"rw", StateClosed, StateOpen}, stateChange)
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(rollingCB, time.Duration(91)*time.Second)
+	pseudoSleep(rollingCB, rollingCB.timeout+time.Nanosecond)
 	assert.Equal(t, StateHalfOpen, rollingCB.State())
 	assert.True(t, rollingCB.expiry.IsZero())
 	assert.Equal(t, StateChange{"rw", StateOpen, StateHalfOpen}, stateChange)
