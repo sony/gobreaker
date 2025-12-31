@@ -24,7 +24,7 @@ func fail2Step(cb *TwoStepCircuitBreaker[bool]) error {
 		return err
 	}
 
-	done(errors.New("failed"))
+	done(errFailed)
 	return nil
 }
 
@@ -94,11 +94,11 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.Error(t, exclude2step(tscb))
 	assert.Equal(t, Counts{}, tscb.cb.Counts())
 
-	pseudoSleep(tscb.cb, time.Duration(59)*time.Second)
+	pseudoSleep(tscb.cb, tscb.cb.timeout-time.Nanosecond)
 	assert.Equal(t, StateOpen, tscb.State())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(2)*time.Second) // over timeout
+	pseudoSleep(tscb.cb, time.Microsecond) // over timeout
 	assert.Equal(t, StateHalfOpen, tscb.State())
 	assert.True(t, tscb.cb.expiry.IsZero())
 
@@ -125,7 +125,7 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.False(t, tscb.cb.expiry.IsZero())
 
 	// StateOpen to StateHalfOpen
-	pseudoSleep(tscb.cb, time.Duration(61)*time.Second)
+	pseudoSleep(tscb.cb, tscb.cb.timeout+time.Nanosecond)
 	assert.Equal(t, StateHalfOpen, tscb.State())
 	assert.True(t, tscb.cb.expiry.IsZero())
 
