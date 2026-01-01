@@ -23,7 +23,7 @@ The type parameter `T` specifies the return type of requests.
 func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T]
 ```
 
-You can configure `CircuitBreaker` by the struct `Settings`:
+You can configure `CircuitBreaker` using the struct `Settings`:
 
 ```go
 type Settings struct {
@@ -35,6 +35,7 @@ type Settings struct {
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
+	IsExcluded    func(err error) bool
 }
 ```
 
@@ -59,23 +60,32 @@ type Settings struct {
 
 - `ReadyToTrip` is called with a copy of `Counts` whenever a request fails in the closed state.
   If `ReadyToTrip` returns true, `CircuitBreaker` will be placed into the open state.
-  If `ReadyToTrip` is `nil`, default `ReadyToTrip` is used.
-  Default `ReadyToTrip` returns true when the number of consecutive failures is more than 5.
+  If `ReadyToTrip` is `nil`, the default `ReadyToTrip` is used.
+  The default `ReadyToTrip` returns true when the number of consecutive failures is more than 5.
 
 - `OnStateChange` is called whenever the state of `CircuitBreaker` changes.
 
 - `IsSuccessful` is called with the error returned from a request.
   If `IsSuccessful` returns true, the error is counted as a success.
-  Otherwise the error is counted as a failure.
-  If `IsSuccessful` is nil, default `IsSuccessful` is used, which returns false for all non-nil errors.
+  Otherwise, the error is counted as a failure.
+  If `IsSuccessful` is nil, the default `IsSuccessful` is used, which returns false for all non-nil errors.
 
-The struct `Counts` holds the numbers of requests and their successes/failures:
+- `IsExcluded` determines whether a request error should be ignored
+  for the purposes of updating the circuit breaker metrics.
+  If `IsExcluded` returns true for a given error,
+  the request is neither counted as a success nor as a failure.
+  This can be used, for example, to ignore context cancellations or
+  other errors that should not affect the circuit breaker state.
+  If `IsExcluded` is nil, no requests are excluded.
+
+The struct `Counts` holds the numbers of requests and their successes/failures/exclusions:
 
 ```go
 type Counts struct {
 	Requests             uint32
 	TotalSuccesses       uint32
 	TotalFailures        uint32
+	TotalExclusions      uint32
 	ConsecutiveSuccesses uint32
 	ConsecutiveFailures  uint32
 }
