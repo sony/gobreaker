@@ -275,8 +275,8 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	// Excluded requests are neutral in Half-Open state.
 	// They do not affect breaker counts or state transitions.
 	// The condition to stay within MaxRequests should be evaluated as:
-	//   (cb.counts.Requests - cb.counts.TotalExclusions) < cb.maxRequests
-	// This ensures excluded requests don’t cause premature errors.
+	// cb.counts.Requests - cb.counts.TotalExclusions < cb.maxRequests
+	// This ensures excluded requests do not cause premature errors.
 	assert.Nil(t, exclude(customCB))
 	assert.Nil(t, exclude(customCB))
 	assert.Nil(t, exclude(customCB))
@@ -514,7 +514,7 @@ func TestCircuitBreakerInParallel(t *testing.T) {
 	assert.Equal(t, Counts{Requests: total, TotalSuccesses: successCount.Load(), ConsecutiveSuccesses: successCount.Load(), TotalExclusions: excludeCount.Load()}, customCB.Counts())
 }
 
-func TestExcludeAndIsSuccessfulCombination(t *testing.T) {
+func TestIsExcludedAndIsSuccessfulCombination(t *testing.T) {
 	cb := NewCircuitBreaker[bool](Settings{
 		IsExcluded: func(err error) bool {
 			return errors.Is(err, errExcluded)
@@ -524,13 +524,13 @@ func TestExcludeAndIsSuccessfulCombination(t *testing.T) {
 		},
 	})
 
-	// Case 1: excluded error -> should be Undetermined (not counted)
+	// Case 1: excluded error -> should be undetermined (not counted)
 	for i := 0; i < 3; i++ {
 		assert.Nil(t, exclude(cb))
 	}
 	assert.Equal(t, Counts{Requests: 3, TotalExclusions: 3}, cb.Counts(), "excluded errors must not be counted as success or failure")
 
-	// Case 2: nil error -> IsSuccessful says "success"
+	// Case 2: nil error -> IsSuccessful says success
 	for i := 0; i < 3; i++ {
 		assert.Nil(t, succeed(cb))
 	}
@@ -557,11 +557,11 @@ func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
 			for j := 0; j < numRequests; j++ {
 				switch j % 3 {
 				case 0:
-					assert.Nil(t, succeed(rollingCB)) // success
+					assert.Nil(t, succeed(rollingCB))
 				case 1:
-					assert.Nil(t, fail(rollingCB)) // failure
+					assert.Nil(t, fail(rollingCB))
 				case 2:
-					assert.Nil(t, exclude(rollingCB)) // exclude
+					assert.Nil(t, exclude(rollingCB))
 				}
 			}
 		}()
