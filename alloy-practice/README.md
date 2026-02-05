@@ -16,6 +16,45 @@ CircuitBreakerでの状態遷移の整合性を検証する。具体的には以
 
 ## モデル化
 
+`sony/gobreaker` の中核ロジックである `gobreaker.go` を解析し、Alloy による形式検証に適した抽象度でモデル化した。本モデルでは、具体的なカウンタ数値や時刻そのものではなく、**「状態遷移の因果関係（State Transition Semantics）」**に焦点を当てている。
+
+### 1. 状態（State）の定義
+Go 言語の実装における `const` 定数定義を、Alloy の `sig` (Signature) として定義した。各状態は互いに排他的であるため、`extends` を用いて表現している。
+
+| Go (gobreaker.go) | Alloy (Model) | 説明 |
+| :--- | :--- | :--- |
+| `StateClosed` | `sig Closed` | 定常状態。リクエストは通過する。 |
+| `StateHalfOpen` | `sig HalfOpen` | 試験状態。リクエストを一つだけ通し、結果を待つ。 |
+| `StateOpen` | `sig Open` | 遮断状態。リクエストは即座にエラーとなる。 |
+
+### 2. イベントとトリガーの抽象化
+`gobreaker` は内部に `Counts` 構造体を持ち、リクエスト数や失敗数をカウントして遷移を判定するが、モデル検証において無限の整数空間を扱うことは探索空間の爆発を招く。
+そのため、本モデルでは**「遷移条件が満たされた」という事実をイベントとして抽象化**した。
+
+* **`Failure` (失敗閾値到達):**
+    * **Go:** `onFailure` メソッド内で呼び出される `cb.readyToTrip(cb.counts)` が `true` を返す状況に対応。単なる1回のエラーではなく、「遮断を引き起こすに足るエラーの蓄積」を表現する。
+* **`TimeoutOp` (タイムアウト経過):**
+    * **Go:** `beforeRequest` メソッド内での `cb.expiry.Before(now)` が `true` となる（Open期間が終了した）状況に対応。
+* **`SuccessOp` (試験成功):**
+    * **Go:** `onSuccess` メソッドの呼び出しに対応。特に Half-Open 状態での成功は状態遷移のトリガーとなる。
+
+### 3. ステートマシンの記述
+`util/ordering` モジュールを用いて時間の経過（ステップ）を表現し、ある時点 $t$ から次の時点 $nextT$ への変化を述語 `pred transition` として記述した。
+
+Goのソースコード上のロジックと、Alloyモデルの対応関係は以下の通りである。
+
+| 遷移元 | 遷移先 | トリガー (Alloy) | 対応する Go 実装ロジック |
+| :--- | :--- | :--- | :--- |
+| **Closed** | **Open** | `Failure` | `onFailure` メソッド: `readyToTrip` が真の場合、`setState(StateOpen)` を実行。 |
+| **Open** | **HalfOpen** | `TimeoutOp` | `beforeRequest` メソッド: 現在時刻が `expiry` を過ぎている場合、`setState(StateHalfOpen)` を実行。 |
+| **HalfOpen** | **Closed** | `SuccessOp` | `onSuccess` メソッド: 無条件で `setState(StateClosed)` を実行し、カウンタをリセット。 |
+| **HalfOpen** | **Open** | `Failure` | `onFailure` メソッド: 無条件で `setState(StateOpen)` を実行（試験失敗）。 |
+
+### 4. 前提条件と制約 (Assumptions)
+モデル化にあたり、以下の仕様を前提とした。
+* **並行性の捨象:** 対象の `gobreaker` は `sync.Mutex` を用いてスレッドセーフに実装されているが、本検証の目的は並行処理における競合状態の検出ではなく、Circuit Breaker パターンとしての状態遷移ロジックの正当性検証にある。   
+したがって、Alloy モデル上では並行実行に伴う競合状態は考慮せず、各イベントが一つの処理のみで実行され、システムの状態が離散的に遷移するモデルとして記述した。
+* **No-Op の許容:** 実際のシステムではリクエストが発生しない期間が存在するため、モデル上でも「状態も変化せず、意味のあるイベントも発生しない（NoOp）」ステップを許容した。
 ## 検証手法
 
 ## 補足事項
