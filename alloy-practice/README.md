@@ -56,5 +56,54 @@ Goのソースコード上のロジックと、Alloyモデルの対応関係は�
 したがって、Alloy モデル上では並行実行に伴う競合状態は考慮せず、各イベントが一つの処理のみで実行され、システムの状態が離散的に遷移するモデルとして記述した。
 * **No-Op の許容:** 実際のシステムではリクエストが発生しない期間が存在するため、モデル上でも「状態も変化せず、意味のあるイベントも発生しない（NoOp）」ステップを許容した。
 ## 検証手法
+設計したモデルに対し、Alloy Analyzer のモデル検査機能（SATソルバ）を用いて、OSSの仕様が論理的に整合しているかを確認した。検証は `assert`記述による反例探索を行い、以下の2つの観点から実施した。
 
-## 補足事項
+### 安全性の検証1
+**目的:**
+「不正な遷移が決して発生しないこと」を検証する。具体的には、Circuit Breaker パターンにおいて最も危険な「Open（遮断）状態から、試験期間（Half-Open）を経ずにいきなり Closed（復旧）してしまう」という遷移の不在を証明する。
+
+**論理式:**
+任意の時刻 $t$ において、「状態が `Open` であり、かつ直後の時刻の状態が `Closed` である」という事象は成立しないことを主張する。
+
+```alloy
+assert NoJumpFromOpenToClosed {
+    // 最後の時刻を除くすべての時刻 t について
+    all t: Time - last | 
+        // OpenからClosedへの直接遷移は存在しない
+        not (t.state = Open and t.next.state = Closed)
+}
+```
+### 安全性の検証2
+**目的:**
+「特定の条件下で期待される遷移が必ず発生すること」を検証する。`gobreaker` の仕様において、Half-Open 状態でのリクエスト失敗は、サーバーがまだ復旧していないことを意味するため、即座に Open 状態へ戻らなければならない。
+
+**論理式:**
+任意の時刻 $t$ において、状態が `HalfOpen` かつイベントが `Failure` であるならば、直後の時刻 $nextT$ の状態は必ず `Open` であることを主張する。
+
+```alloy
+assert HalfOpenFailureTripsBreaker {
+    all t: Time - last |
+        (t.state = HalfOpen and t.event = Failure) implies t.next.state = Open
+}
+```
+
+### 検証範囲の設定（Scope）
+Alloy は有限の探索空間内で反例を探す「有界モデル検査」を行う。本検証では以下のコマンドを用いた。
+
+```alloy
+check NoJumpFromOpenToClosed for 10 Time
+check HalfOpenFailureTripsBreaker for 10 Time
+```
+
+**スコープ設定の根拠（Small Scope Hypothesis）**: 形式手法における「小スコープ仮説」に基づき、探索範囲を 10 Timeとした。 Circuit Breaker の基本的なサイクル（Closed → Open → HalfOpen → Closed/Open）は最短でも3〜4ステップで一周する。10ステップあれば、このサイクルを2周以上繰り返すシナリオを網羅できるため、論理的な欠陥が存在すれば検出可能であると判断した。
+
+### 結果の考察
+Alloy Analyzer 4.2 にて上記 check コマンドを実行した結果、No counterexample found. という結果を得た。
+
+これにより、以下の結論が得られる。
+
+- **仕様の堅牢性**: gobreaker の状態遷移ロジックは、モデル化された抽象度において矛盾を含んでいない。
+- **安全性の担保**: 復旧手順（Half-Open）をスキップするような不正な遷移は論理的に発生し得ない。
+- **意図通りの挙動**: 失敗時の遮断ロジックが仕様通りに機能している。
+
+以上の結果より、sony/gobreaker のステートマシン設計は、Circuit Breaker パターンとして要求される基本的な安全性を満たしていると結論付ける。
