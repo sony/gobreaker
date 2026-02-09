@@ -80,7 +80,21 @@ func causePanic(cb *CircuitBreaker) error {
 func newCustom() *CircuitBreaker {
 	var customSt Settings
 	customSt.Name = "cb"
-	customSt.MaxRequests = 3
+	customSt.ReadyToClose = func(counts Counts) (bool, bool) {
+		if counts.ConsecutiveSuccesses >= 3 {
+			return true, true
+		}
+
+		numReqs := counts.Requests
+		failureRatio := float64(counts.TotalFailures) / float64(numReqs)
+
+		var nowOpen bool
+		if numReqs >= 3 && failureRatio >= 0.6 {
+			nowOpen = true
+		}
+
+		return false, nowOpen
+	}
 	customSt.Interval = time.Duration(30) * time.Second
 	customSt.Timeout = time.Duration(90) * time.Second
 	customSt.ReadyToTrip = func(counts Counts) bool {
@@ -126,7 +140,7 @@ func TestStateConstants(t *testing.T) {
 func TestNewCircuitBreaker(t *testing.T) {
 	defaultCB := NewCircuitBreaker(Settings{})
 	assert.Equal(t, "", defaultCB.name)
-	assert.Equal(t, uint32(1), defaultCB.maxRequests)
+	assert.NotNil(t, defaultCB.readyToClose)
 	assert.Equal(t, time.Duration(0), defaultCB.interval)
 	assert.Equal(t, time.Duration(60)*time.Second, defaultCB.timeout)
 	assert.NotNil(t, defaultCB.readyToTrip)
@@ -137,7 +151,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 
 	customCB := newCustom()
 	assert.Equal(t, "cb", customCB.name)
-	assert.Equal(t, uint32(3), customCB.maxRequests)
+	assert.NotNil(t, customCB.readyToClose)
 	assert.Equal(t, time.Duration(30)*time.Second, customCB.interval)
 	assert.Equal(t, time.Duration(90)*time.Second, customCB.timeout)
 	assert.NotNil(t, customCB.readyToTrip)
@@ -148,7 +162,7 @@ func TestNewCircuitBreaker(t *testing.T) {
 
 	negativeDurationCB := newNegativeDurationCB()
 	assert.Equal(t, "ncb", negativeDurationCB.name)
-	assert.Equal(t, uint32(1), negativeDurationCB.maxRequests)
+	assert.NotNil(t, negativeDurationCB.readyToClose)
 	assert.Equal(t, time.Duration(0)*time.Second, negativeDurationCB.interval)
 	assert.Equal(t, time.Duration(60)*time.Second, negativeDurationCB.timeout)
 	assert.NotNil(t, negativeDurationCB.readyToTrip)
@@ -256,7 +270,7 @@ func TestCustomCircuitBreaker(t *testing.T) {
 	ch := succeedLater(customCB, time.Duration(100)*time.Millisecond) // 3 consecutive successes
 	time.Sleep(time.Duration(50) * time.Millisecond)
 	assert.Equal(t, Counts{3, 2, 0, 2, 0}, customCB.counts)
-	assert.Error(t, succeed(customCB)) // over MaxRequests
+	assert.Nil(t, succeed(customCB))
 	assert.Nil(t, <-ch)
 	assert.Equal(t, StateClosed, customCB.State())
 	assert.Equal(t, Counts{0, 0, 0, 0, 0}, customCB.counts)
