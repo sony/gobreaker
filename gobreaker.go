@@ -103,6 +103,9 @@ func (c *Counts) clear() {
 // If IsSuccessful returns true, the error is counted as a success.
 // Otherwise the error is counted as a failure.
 // If IsSuccessful is nil, default IsSuccessful is used, which returns false for all non-nil errors.
+//
+// Now is called whenever the current time is requested.
+// Default Now returns time.Now().
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -111,6 +114,7 @@ type Settings struct {
 	ReadyToTrip   func(counts Counts) bool
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
+	Now           func() time.Time
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
@@ -122,6 +126,7 @@ type CircuitBreaker struct {
 	readyToTrip   func(counts Counts) bool
 	isSuccessful  func(err error) bool
 	onStateChange func(name string, from State, to State)
+	now           func() time.Time
 
 	mutex      sync.Mutex
 	state      State
@@ -174,7 +179,13 @@ func NewCircuitBreaker(st Settings) *CircuitBreaker {
 		cb.isSuccessful = st.IsSuccessful
 	}
 
-	cb.toNewGeneration(time.Now())
+	if st.Now == nil {
+		cb.now = time.Now
+	} else {
+		cb.now = st.Now
+	}
+
+	cb.toNewGeneration(cb.now())
 
 	return cb
 }
@@ -207,7 +218,7 @@ func (cb *CircuitBreaker) State() State {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
-	now := time.Now()
+	now := cb.now()
 	state, _ := cb.currentState(now)
 	return state
 }
@@ -277,7 +288,7 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
-	now := time.Now()
+	now := cb.now()
 	state, generation := cb.currentState(now)
 
 	if state == StateOpen {
@@ -294,7 +305,7 @@ func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
-	now := time.Now()
+	now := cb.now()
 	state, generation := cb.currentState(now)
 	if generation != before {
 		return
