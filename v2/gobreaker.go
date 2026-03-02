@@ -20,9 +20,9 @@ const (
 )
 
 var (
-	// ErrTooManyRequests is returned when the CB state is half open and the requests count is over the cb maxRequests
+	// ErrTooManyRequests is returned when the state is half-open and the request count exceeds maxRequests
 	ErrTooManyRequests = errors.New("too many requests")
-	// ErrOpenState is returned when the CB state is open
+	// ErrOpenState is returned when the state is open
 	ErrOpenState = errors.New("circuit breaker is open")
 )
 
