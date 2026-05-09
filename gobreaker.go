@@ -128,6 +128,12 @@ type CircuitBreaker struct {
 	generation uint64
 	counts     Counts
 	expiry     time.Time
+
+	// pendingNotify holds a state-change notification to be dispatched after
+	// the mutex is released.  Calling onStateChange while the mutex is held
+	// causes a deadlock if the callback calls any CircuitBreaker method
+	// (e.g. Counts).  See https://github.com/sony/gobreaker/issues/37
+	pendingNotify *[2]State // [from, to]; nil means no pending notification
 }
 
 // TwoStepCircuitBreaker is like CircuitBreaker but instead of surrounding a function
@@ -205,10 +211,18 @@ func (cb *CircuitBreaker) Name() string {
 // State returns the current state of the CircuitBreaker.
 func (cb *CircuitBreaker) State() State {
 	cb.mutex.Lock()
-	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, _ := cb.currentState(now)
+
+	notify := cb.pendingNotify
+	cb.pendingNotify = nil
+
+	cb.mutex.Unlock()
+
+	if notify != nil {
+		cb.onStateChange(cb.name, notify[0], notify[1])
+	}
 	return state
 }
 
@@ -275,35 +289,57 @@ func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) 
 
 func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	cb.mutex.Lock()
-	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation := cb.currentState(now)
 
+	var err error
 	if state == StateOpen {
-		return generation, ErrOpenState
+		err = ErrOpenState
 	} else if state == StateHalfOpen && cb.counts.Requests >= cb.maxRequests {
-		return generation, ErrTooManyRequests
+		err = ErrTooManyRequests
+	} else {
+		cb.counts.onRequest()
 	}
 
-	cb.counts.onRequest()
-	return generation, nil
+	// Capture and clear the pending notification while still holding the lock
+	// so that concurrent goroutines don't steal each other's notifications.
+	notify := cb.pendingNotify
+	cb.pendingNotify = nil
+
+	cb.mutex.Unlock()
+
+	// Dispatch outside the mutex to prevent deadlock when the callback calls
+	// back into the CircuitBreaker (e.g. Counts).  See issue #37.
+	if notify != nil {
+		cb.onStateChange(cb.name, notify[0], notify[1])
+	}
+	return generation, err
 }
 
 func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	cb.mutex.Lock()
-	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation := cb.currentState(now)
-	if generation != before {
-		return
+	if generation == before {
+		if success {
+			cb.onSuccess(state, now)
+		} else {
+			cb.onFailure(state, now)
+		}
 	}
 
-	if success {
-		cb.onSuccess(state, now)
-	} else {
-		cb.onFailure(state, now)
+	// Capture and clear the pending notification while still holding the lock.
+	notify := cb.pendingNotify
+	cb.pendingNotify = nil
+
+	cb.mutex.Unlock()
+
+	// Dispatch outside the mutex to prevent deadlock when the callback calls
+	// back into the CircuitBreaker (e.g. Counts).  See issue #37.
+	if notify != nil {
+		cb.onStateChange(cb.name, notify[0], notify[1])
 	}
 }
 
@@ -355,10 +391,14 @@ func (cb *CircuitBreaker) setState(state State, now time.Time) {
 
 	cb.toNewGeneration(now)
 
+	// Record the transition for deferred dispatch outside the mutex.
+	// We overwrite any previous pending notification: only the latest
+	// transition matters when multiple happen within a single locked section.
 	if cb.onStateChange != nil {
-		cb.onStateChange(cb.name, prev, state)
+		cb.pendingNotify = &[2]State{prev, state}
 	}
 }
+
 
 func (cb *CircuitBreaker) toNewGeneration(now time.Time) {
 	cb.generation++
