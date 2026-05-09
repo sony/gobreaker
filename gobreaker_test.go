@@ -366,6 +366,46 @@ func TestCustomIsSuccessful(t *testing.T) {
 
 }
 
+// TestOnStateChangeNoDeadlock verifies that calling CircuitBreaker methods
+// (e.g. Counts, State) from within the OnStateChange callback does not
+// deadlock.  Before the fix, OnStateChange was called while the internal
+// mutex was held; any re-entrant call into the breaker would dead-lock.
+// See https://github.com/sony/gobreaker/issues/37
+func TestOnStateChangeNoDeadlock(t *testing.T) {
+	done := make(chan struct{})
+
+	var cb *CircuitBreaker
+	cb = NewCircuitBreaker(Settings{
+		Name:        "deadlock-test",
+		MaxRequests: 1,
+		Timeout:     time.Duration(10) * time.Millisecond,
+		ReadyToTrip: func(counts Counts) bool { return counts.ConsecutiveFailures >= 1 },
+		OnStateChange: func(name string, from, to State) {
+			// Calling cb.Counts() here used to dead-lock because the mutex
+			// was still held when OnStateChange fired.
+			_ = cb.Counts()
+			_ = cb.State()
+		},
+	})
+
+	// Trigger closed→open transition in a goroutine so that a timeout-based
+	// test harness can detect if we dead-lock.
+	go func() {
+		defer close(done)
+		_ = fail(cb)
+		// Trigger open→half-open by advancing past the timeout.
+		time.Sleep(time.Duration(20) * time.Millisecond)
+		_ = cb.State()
+	}()
+
+	select {
+	case <-done:
+		// Success: no deadlock
+	case <-time.After(time.Duration(2) * time.Second):
+		t.Fatal("deadlock detected: OnStateChange blocked when calling Counts()/State()")
+	}
+}
+
 func TestCircuitBreakerInParallel(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
