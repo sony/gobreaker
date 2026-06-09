@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -15,6 +16,7 @@ type Store struct {
 	ctx    context.Context
 	client redis.UniversalClient
 	rs     *redsync.Redsync
+	mu     sync.Mutex
 	mutex  map[string]*redsync.Mutex
 }
 
@@ -40,25 +42,32 @@ func NewStoreFromClient(client redis.UniversalClient) gobreaker.SharedDataStore 
 }
 
 func (rs *Store) Lock(name string) error {
+	rs.mu.Lock()
 	mutex, ok := rs.mutex[name]
-	if ok {
-		return mutex.Lock()
+	if !ok {
+		mutex = rs.rs.NewMutex(name, redsync.WithExpiry(5*time.Second))
+		rs.mutex[name] = mutex
 	}
+	rs.mu.Unlock()
 
-	mutex = rs.rs.NewMutex(name, redsync.WithExpiry(5*time.Second))
-	rs.mutex[name] = mutex
 	return mutex.Lock()
 }
 
 func (rs *Store) Unlock(name string) error {
+	rs.mu.Lock()
 	mutex, ok := rs.mutex[name]
-	if ok {
-		var err error
-		ok, err = mutex.Unlock()
-		if ok && err == nil {
-			delete(rs.mutex, name)
-			return nil
-		}
+	rs.mu.Unlock()
+
+	if !ok {
+		return errors.New("unlock failed")
+	}
+
+	success, err := mutex.Unlock()
+	if success && err == nil {
+		rs.mu.Lock()
+		delete(rs.mutex, name)
+		rs.mu.Unlock()
+		return nil
 	}
 	return errors.New("unlock failed")
 }
