@@ -33,13 +33,22 @@ func (tscb *TwoStepCircuitBreaker[T]) Counts() Counts {
 // If the circuit breaker allow the new request, it returns a callback
 // used to register the error object that the request will return in a separate step.
 // If the circuit breaker does not allow the request, it returns an error.
-func (tscb *TwoStepCircuitBreaker[T]) Allow() (done func(err error), err error) {
+//
+// The returned callback reports whether its result was actually recorded by the
+// CircuitBreaker: it returns false if the CircuitBreaker had already moved on to a new
+// generation by the time the callback was invoked -- for example because the Open-state
+// timeout expired and it transitioned to Half-Open, or because a concurrent request tripped
+// it back to Open in the meantime. In that case the result is discarded rather than silently
+// applied to a state the caller no longer observed. Most callers can ignore the return value;
+// it exists for callers that need to detect and react to a dropped result (e.g. retrying the
+// probe, or alerting that a Half-Open trial never got counted).
+func (tscb *TwoStepCircuitBreaker[T]) Allow() (done func(err error) bool, err error) {
 	generation, age, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	return func(err error) {
-		tscb.cb.afterRequest(generation, age, err)
+	return func(err error) bool {
+		return tscb.cb.afterRequest(generation, age, err)
 	}, nil
 }
