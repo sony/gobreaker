@@ -262,14 +262,23 @@ func (tscb *TwoStepCircuitBreaker) Counts() Counts {
 // Allow checks if a new request can proceed. It returns a callback that should be used to
 // register the success or failure in a separate step. If the circuit breaker doesn't allow
 // requests, it returns an error.
-func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
+//
+// The returned callback reports whether its result was actually recorded by the
+// CircuitBreaker: it returns false if the CircuitBreaker had already moved on to a new
+// generation by the time the callback was invoked -- for example because the Open-state
+// timeout expired and it transitioned to Half-Open, or because a concurrent request tripped
+// it back to Open in the meantime. In that case the result is discarded rather than silently
+// applied to a state the caller no longer observed. Most callers can ignore the return value;
+// it exists for callers that need to detect and react to a dropped result (e.g. retrying the
+// probe, or alerting that a Half-Open trial never got counted).
+func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool) bool, err error) {
 	generation, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
-	return func(success bool) {
-		tscb.cb.afterRequest(generation, success)
+	return func(success bool) bool {
+		return tscb.cb.afterRequest(generation, success)
 	}, nil
 }
 
@@ -290,14 +299,19 @@ func (cb *CircuitBreaker) beforeRequest() (uint64, error) {
 	return generation, nil
 }
 
-func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
+// afterRequest records the outcome of a request previously admitted by beforeRequest.
+// It returns false, without recording anything, if the CircuitBreaker has already moved on
+// to a new generation since beforeRequest returned (i.e. before != the current generation)
+// -- see TwoStepCircuitBreaker.Allow for why that can happen when this is invoked via a
+// caller-controlled done callback.
+func (cb *CircuitBreaker) afterRequest(before uint64, success bool) bool {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation := cb.currentState(now)
 	if generation != before {
-		return
+		return false
 	}
 
 	if success {
@@ -305,6 +319,7 @@ func (cb *CircuitBreaker) afterRequest(before uint64, success bool) {
 	} else {
 		cb.onFailure(state, now)
 	}
+	return true
 }
 
 func (cb *CircuitBreaker) onSuccess(state State, now time.Time) {
