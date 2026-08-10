@@ -251,19 +251,24 @@ func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
 	return generation, age, nil
 }
 
-func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, err error) {
+// afterRequest records the outcome of a request previously admitted by beforeRequest.
+// It returns false, without recording anything, if the CircuitBreaker has already moved on
+// to a new generation since beforeRequest returned (i.e. previous != the current generation)
+// -- see TwoStepCircuitBreaker.Allow for why that can happen when this is invoked via a
+// caller-controlled done callback.
+func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, err error) bool {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation, _ := cb.currentState(now)
 	if generation != previous {
-		return
+		return false
 	}
 
 	if cb.isExcluded(err) {
 		cb.onExclusion(age)
-		return
+		return true
 	}
 
 	if cb.isSuccessful(err) {
@@ -271,6 +276,7 @@ func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, err error
 	} else {
 		cb.onFailure(state, age, now)
 	}
+	return true
 }
 
 func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {

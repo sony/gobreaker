@@ -136,3 +136,37 @@ func TestTwoStepCircuitBreaker(t *testing.T) {
 	assert.Equal(t, Counts{}, tscb.cb.Counts())
 	assert.True(t, tscb.cb.expiry.IsZero())
 }
+
+// TestTwoStepCircuitBreaker_StaleGenerationDropsResult reproduces
+// https://github.com/sony/gobreaker/issues/122: if the CircuitBreaker moves on to a new
+// generation between Allow() and the caller invoking the returned done callback, the result
+// is discarded rather than applied to a generation the caller no longer observed. The done
+// callback must report this so the caller isn't left believing its probe was counted.
+func TestTwoStepCircuitBreaker_StaleGenerationDropsResult(t *testing.T) {
+	tscb := NewTwoStepCircuitBreaker[bool](Settings{})
+
+	// StateClosed -> StateOpen (default ReadyToTrip needs 6 consecutive failures).
+	for i := 0; i < 6; i++ {
+		assert.Nil(t, fail2Step(tscb))
+	}
+	assert.Equal(t, StateOpen, tscb.State())
+
+	// StateOpen -> StateHalfOpen.
+	pseudoSleep(tscb.cb, tscb.cb.timeout+time.Nanosecond)
+	assert.Equal(t, StateHalfOpen, tscb.State())
+
+	// Allow a probe request while Half-Open, but don't report its result yet.
+	done, err := tscb.Allow()
+	assert.Nil(t, err)
+
+	// Simulate the breaker moving on to a new generation before the probe's result is
+	// reported back, e.g. because a concurrent probe failed and tripped it back to Open.
+	tscb.cb.mutex.Lock()
+	tscb.cb.toNewGeneration(time.Now())
+	tscb.cb.mutex.Unlock()
+
+	// done() must report that the result was discarded, and must not mutate the new
+	// generation's counts.
+	assert.False(t, done(nil))
+	assert.Equal(t, Counts{}, tscb.cb.Counts())
+}
