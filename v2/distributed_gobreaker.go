@@ -44,31 +44,31 @@ func NewDistributedCircuitBreaker[T any](store SharedDataStore, settings Setting
 		return nil, ErrNoSharedStore
 	}
 
-	dcb = &DistributedCircuitBreaker[T]{
+	breaker := &DistributedCircuitBreaker[T]{
 		CircuitBreaker: NewCircuitBreaker[T](settings),
 		store:          store,
 	}
 
-	err = dcb.lock()
+	err = breaker.lock()
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		e := dcb.unlock()
+		e := breaker.unlock()
 		if err == nil {
 			err = e
 		}
 	}()
 
-	_, err = dcb.getSharedState()
+	_, err = breaker.getSharedState()
 	if err == ErrNoSharedState {
-		err = dcb.setSharedState(dcb.extract())
+		err = breaker.setSharedState(breaker.extract())
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	return dcb, nil
+	return breaker, nil
 }
 
 const (

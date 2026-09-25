@@ -123,6 +123,34 @@ func TestDistributedCircuitBreakerInitialization(t *testing.T) {
 	assertState(t, dcb, StateClosed)
 }
 
+type failingSetDataStore struct {
+	*MockStore
+	unlocked bool
+}
+
+func (s *failingSetDataStore) SetData(name string, data []byte) error {
+	return errors.New("set data failed")
+}
+
+func (s *failingSetDataStore) Unlock(name string) error {
+	s.unlocked = true
+	return nil
+}
+
+func TestDistributedCircuitBreakerInitializationStoreError(t *testing.T) {
+	store := &failingSetDataStore{MockStore: NewMockStore()}
+
+	var dcb *DistributedCircuitBreaker[any]
+	var err error
+	assert.NotPanics(t, func() {
+		dcb, err = NewDistributedCircuitBreaker[any](store, Settings{Name: "TestBreaker"})
+	})
+
+	assert.Nil(t, dcb)
+	assert.EqualError(t, err, "set data failed")
+	assert.True(t, store.unlocked)
+}
+
 func TestDistributedCircuitBreakerStateTransitions(t *testing.T) {
 	dcb := setUpDCB()
 
