@@ -4,6 +4,11 @@ package gobreaker
 // CircuitBreaker clears the internal Counts either
 // on the change of the state or at the closed-state intervals.
 // Counts ignores the results of the requests sent before clearing.
+//
+// Requests is incremented when a request is admitted (beforeRequest),
+// whereas TotalSuccesses, TotalFailures, and TotalExclusions are incremented only
+// after the request completes (afterRequest). In-flight requests equal
+// Requests - (TotalSuccesses + TotalFailures + TotalExclusions).
 type Counts struct {
 	Requests             uint32
 	TotalSuccesses       uint32

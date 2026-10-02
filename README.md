@@ -94,6 +94,7 @@ type Counts struct {
 `CircuitBreaker` clears the internal `Counts` either
 on the change of the state or at the closed-state intervals.
 `Counts` ignores the results of the requests sent before clearing.
+`Counts.Requests` is incremented when a request is admitted, whereas `TotalSuccesses`, `TotalFailures`, and `TotalExclusions` are updated only after the request completes. In-flight requests can be determined by `Counts.Requests - (Counts.TotalSuccesses + Counts.TotalFailures + Counts.TotalExclusions)`.
 
 `CircuitBreaker` can wrap any function to send a request:
 
@@ -106,6 +107,30 @@ The method `Execute` runs the given request if `CircuitBreaker` accepts it.
 Otherwise, `Execute` returns the result of the request.
 If a panic occurs in the request, `CircuitBreaker` handles it as an error
 and causes the same panic again.
+
+### Request Execution Lifecycle and In-Flight Requests
+
+`CircuitBreaker` evaluates requests across two distinct phases:
+
+1. **Before request (`beforeRequest`)**:
+   - Inspects the current state. If `Open`, returns `ErrOpenState` immediately without running the request.
+   - If `HalfOpen` and the number of active requests reaches `MaxRequests`, returns `ErrTooManyRequests` immediately.
+   - Otherwise, increments `Counts.Requests` and admits the call for execution.
+
+2. **After request (`afterRequest`)**:
+   - Evaluates the outcome upon completion and updates `Counts.TotalSuccesses`, `Counts.TotalFailures`, or `Counts.TotalExclusions`.
+   - In the `Closed` state, evaluates `ReadyToTrip` when a request fails to decide whether to transition to `Open`.
+   - In the `HalfOpen` state, checks if consecutive successes reach `MaxRequests` (transitioning back to `Closed`) or if a failure occurs (reopening to `Open`).
+
+`TwoStepCircuitBreaker` follows the same lifecycle: `Allow` performs the admission check (`beforeRequest`), and the returned callback reports the outcome (`afterRequest`).
+
+#### Slow Requests, Latency, and Timeouts
+
+Because state transitions are evaluated only *after* request completion, in-flight slow requests do not increment failure counters and do not trip the circuit breaker while still executing.
+
+- **Unbounded in-flight calls**: If a downstream service hangs or experiences high latency without immediately returning an error, the breaker remains `Closed` and continues admitting incoming calls. Without bounded execution times, a surge of slow requests can accumulate, consuming goroutines, network sockets, and memory before any request fails.
+- **Recommended timeouts**: Always configure explicit timeouts and deadlines (for example, using `context.WithTimeout` or client-level HTTP timeouts) on functions executed through `CircuitBreaker`. Prompt timeouts ensure that stalled requests fail quickly, reporting their failures to `afterRequest` so the breaker trips before exhausting application resources.
+- **Detecting slow requests in `ReadyToTrip`**: Callers can inspect the number of pending in-flight calls inside a custom `ReadyToTrip` by comparing `Counts.Requests` with the sum of completed requests (`Counts.TotalSuccesses + Counts.TotalFailures` + `Counts.TotalExclusions`). When downstream latency spikes, `Requests` will significantly exceed the completed count.
 
 Example
 -------

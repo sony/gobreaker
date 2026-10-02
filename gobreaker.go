@@ -44,6 +44,10 @@ func (s State) String() string {
 // CircuitBreaker clears the internal Counts either
 // on the change of the state or at the closed-state intervals.
 // Counts ignores the results of the requests sent before clearing.
+//
+// Requests is incremented when a request is admitted (beforeRequest),
+// whereas TotalSuccesses and TotalFailures are incremented only after the request
+// completes (afterRequest). In-flight requests equal Requests - (TotalSuccesses + TotalFailures).
 type Counts struct {
 	Requests             uint32
 	TotalSuccesses       uint32
@@ -96,6 +100,9 @@ func (c *Counts) clear() {
 // If ReadyToTrip returns true, the CircuitBreaker will be placed into the open state.
 // If ReadyToTrip is nil, default ReadyToTrip is used.
 // Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
+// ReadyToTrip is evaluated only after request completion. In-flight slow requests do not
+// contribute to failure counts until they complete or time out. Callers can inspect pending
+// in-flight calls in ReadyToTrip by comparing Counts.Requests with completed counts.
 //
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 //
@@ -225,6 +232,15 @@ func (cb *CircuitBreaker) Counts() Counts {
 // Otherwise, Execute returns the result of the request.
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
+//
+// Lifecycle and In-Flight Requests:
+// When Execute is called, beforeRequest validates breaker state and increments
+// Counts.Requests before executing req. State transitions and failure counts
+// are evaluated only after req completes (via afterRequest). Slow or hanging
+// in-flight requests do not contribute to failure thresholds or trip the
+// breaker until they finish or time out. Callers should enforce timeouts
+// (e.g. via context.Context) on requests to avoid unbounded in-flight calls
+// and delayed state transitions.
 func (cb *CircuitBreaker) Execute(req func() (interface{}, error)) (interface{}, error) {
 	generation, err := cb.beforeRequest()
 	if err != nil {
@@ -262,6 +278,9 @@ func (tscb *TwoStepCircuitBreaker) Counts() Counts {
 // Allow checks if a new request can proceed. It returns a callback that should be used to
 // register the success or failure in a separate step. If the circuit breaker doesn't allow
 // requests, it returns an error.
+//
+// Like Execute, Allow registers the request before execution and defers failure counting
+// and state transition checks until the returned callback is invoked.
 func (tscb *TwoStepCircuitBreaker) Allow() (done func(success bool), err error) {
 	generation, err := tscb.cb.beforeRequest()
 	if err != nil {

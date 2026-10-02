@@ -65,6 +65,9 @@ func (s State) String() string {
 // If ReadyToTrip returns true, the CircuitBreaker will be placed into the open state.
 // If ReadyToTrip is nil, default ReadyToTrip is used.
 // Default ReadyToTrip returns true when the number of consecutive failures is more than 5.
+// ReadyToTrip is evaluated only after request completion. In-flight slow requests do not
+// contribute to failure counts until they complete or time out. Callers can inspect pending
+// in-flight calls in ReadyToTrip by comparing Counts.Requests with completed counts.
 //
 // OnStateChange is called whenever the state of the CircuitBreaker changes.
 //
@@ -214,6 +217,15 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 // Otherwise, Execute returns the result of the request.
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
+//
+// Lifecycle and In-Flight Requests:
+// When Execute is called, beforeRequest validates breaker state and increments
+// Counts.Requests before executing req. State transitions and failure counts
+// are evaluated only after req completes (via afterRequest). Slow or hanging
+// in-flight requests do not contribute to failure thresholds or trip the
+// breaker until they finish or time out. Callers should enforce timeouts
+// (e.g. via context.Context) on requests to avoid unbounded in-flight calls
+// and delayed state transitions.
 func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 	generation, age, err := cb.beforeRequest()
 	if err != nil {

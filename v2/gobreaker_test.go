@@ -1,6 +1,7 @@
 package gobreaker
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"sync"
@@ -567,5 +568,154 @@ func TestRollingWindowCircuitBreakerInParallel(t *testing.T) {
 		}()
 	}
 
+	wg.Wait()
+}
+
+func TestSlowRequestsInFlightLifecycle(t *testing.T) {
+	cb := NewCircuitBreaker[string](Settings{
+		Name: "slow-requests-cb",
+		ReadyToTrip: func(counts Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
+
+	const numSlow = 3
+	started := make(chan struct{}, numSlow)
+	release := make(chan struct{})
+	done := make(chan error, numSlow)
+
+	for i := 0; i < numSlow; i++ {
+		go func() {
+			_, err := cb.Execute(func() (string, error) {
+				started <- struct{}{}
+				<-release
+				return "", errors.New("slow failure")
+			})
+			done <- err
+		}()
+	}
+
+	for i := 0; i < numSlow; i++ {
+		<-started
+	}
+
+	// In-flight calls are admitted and counted in Requests,
+	// but TotalFailures is 0 and State remains Closed.
+	assert.Equal(t, StateClosed, cb.State())
+	counts := cb.Counts()
+	assert.Equal(t, uint32(3), counts.Requests)
+	assert.Equal(t, uint32(0), counts.TotalFailures)
+
+	// Additional requests can still execute while previous slow calls are in flight.
+	admitted := false
+	_, err := cb.Execute(func() (string, error) {
+		admitted = true
+		return "fast success", nil
+	})
+	assert.Nil(t, err)
+	assert.True(t, admitted)
+
+	// Release slow requests so they finish and report failures to afterRequest.
+	close(release)
+	for i := 0; i < numSlow; i++ {
+		err := <-done
+		assert.EqualError(t, err, "slow failure")
+	}
+
+	// Now that failures have reported, the circuit breaker trips to Open.
+	assert.Equal(t, StateOpen, cb.State())
+
+	// Once Open, new requests are rejected immediately without executing req.
+	executed := false
+	_, err = cb.Execute(func() (string, error) {
+		executed = true
+		return "", nil
+	})
+	assert.Equal(t, ErrOpenState, err)
+	assert.False(t, executed)
+}
+
+func TestSlowRequestsWithContextTimeout(t *testing.T) {
+	cb := NewCircuitBreaker[string](Settings{
+		Name: "timeout-cb",
+		ReadyToTrip: func(counts Counts) bool {
+			return counts.ConsecutiveFailures >= 2
+		},
+	})
+
+	runWithTimeout := func(timeout time.Duration, workDuration time.Duration) error {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		_, err := cb.Execute(func() (string, error) {
+			select {
+			case <-time.After(workDuration):
+				return "success", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		})
+		return err
+	}
+
+	// Request times out and fails
+	err1 := runWithTimeout(20*time.Millisecond, 100*time.Millisecond)
+	assert.Equal(t, context.DeadlineExceeded, err1)
+	assert.Equal(t, StateClosed, cb.State())
+	assert.Equal(t, uint32(1), cb.Counts().TotalFailures)
+
+	// Second request times out and fails, tripping the breaker
+	err2 := runWithTimeout(20*time.Millisecond, 100*time.Millisecond)
+	assert.Equal(t, context.DeadlineExceeded, err2)
+	assert.Equal(t, StateOpen, cb.State())
+
+	// Circuit is now open: subsequent request is rejected immediately without waiting
+	start := time.Now()
+	_, errOpen := cb.Execute(func() (string, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "", nil
+	})
+	elapsed := time.Since(start)
+	assert.Equal(t, ErrOpenState, errOpen)
+	assert.True(t, elapsed < 20*time.Millisecond)
+}
+
+func TestDetectInFlightInReadyToTrip(t *testing.T) {
+	cb := NewCircuitBreaker[string](Settings{
+		Name: "inflight-cb",
+		ReadyToTrip: func(counts Counts) bool {
+			inFlight := counts.Requests - (counts.TotalSuccesses + counts.TotalFailures + counts.TotalExclusions)
+			return inFlight >= 2
+		},
+	})
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Launch two slow in-flight calls
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = cb.Execute(func() (string, error) {
+				started <- struct{}{}
+				<-release
+				return "", nil
+			})
+		}()
+	}
+
+	<-started
+	<-started
+
+	// Execute a fast request that fails; ReadyToTrip sees inFlight >= 2 and trips
+	_, err := cb.Execute(func() (string, error) {
+		return "", errors.New("fast failure")
+	})
+	assert.EqualError(t, err, "fast failure")
+	assert.Equal(t, StateOpen, cb.State())
+
+	close(release)
 	wg.Wait()
 }
