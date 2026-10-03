@@ -135,7 +135,7 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.bucketPeriod = cb.interval
 		numBuckets = 1
 	} else {
-		cb.interval = (st.Interval + st.BucketPeriod - 1) / st.BucketPeriod * st.BucketPeriod
+		cb.interval = ((st.Interval-1)/st.BucketPeriod + 1) * st.BucketPeriod
 		cb.bucketPeriod = st.BucketPeriod
 		numBuckets = int64(cb.interval / cb.bucketPeriod)
 	}
