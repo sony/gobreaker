@@ -179,6 +179,40 @@ func TestNewCircuitBreaker(t *testing.T) {
 	assert.True(t, negativeDurationCB.expiry.IsZero())
 }
 
+func TestNewCircuitBreakerLargeRollingInterval(t *testing.T) {
+	maxDuration := time.Duration(1<<63 - 1)
+	tests := []struct {
+		name         string
+		interval     time.Duration
+		bucketPeriod time.Duration
+		wantInterval time.Duration
+		wantBuckets  int
+	}{
+		{"equal maximum durations", maxDuration, maxDuration, maxDuration, 1},
+		{"maximum bucket period", time.Second, maxDuration, maxDuration, 1},
+		{"two large buckets", maxDuration - 1, maxDuration / 2, maxDuration - 1, 2},
+		{"round up near maximum", maxDuration - 2, maxDuration / 2, maxDuration - 1, 2},
+		{"equal durations", time.Second, time.Second, time.Second, 1},
+		{"exact multiple", 2 * time.Second, time.Second, 2 * time.Second, 2},
+		{"round up", 3 * time.Second, 2 * time.Second, 4 * time.Second, 2},
+		{"larger bucket period", time.Second, 2 * time.Second, 2 * time.Second, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cb := NewCircuitBreaker[bool](Settings{
+				Interval:     tt.interval,
+				BucketPeriod: tt.bucketPeriod,
+			})
+			assert.Equal(t, tt.wantInterval, cb.interval)
+			if !assert.Len(t, cb.counts.buckets, tt.wantBuckets) {
+				return
+			}
+			assert.Nil(t, succeed(cb))
+			assert.Equal(t, Counts{Requests: 1, TotalSuccesses: 1, ConsecutiveSuccesses: 1}, cb.Counts())
+		})
+	}
+}
+
 func TestDefaultCircuitBreaker(t *testing.T) {
 	defaultCB := NewCircuitBreaker[bool](Settings{})
 	assert.Equal(t, "", defaultCB.Name())
