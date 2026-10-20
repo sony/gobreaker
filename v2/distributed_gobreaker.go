@@ -182,11 +182,6 @@ func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 
 // State returns the State of DistributedCircuitBreaker.
 func (dcb *DistributedCircuitBreaker[T]) State() (state State, err error) {
-	shared, err := dcb.getSharedState()
-	if err != nil {
-		return shared.State, err
-	}
-
 	err = dcb.lock()
 	if err != nil {
 		return state, err
@@ -198,6 +193,11 @@ func (dcb *DistributedCircuitBreaker[T]) State() (state State, err error) {
 		}
 	}()
 
+	shared, err := dcb.getSharedState()
+	if err != nil {
+		return shared.State, err
+	}
+
 	dcb.inject(shared)
 	state = dcb.CircuitBreaker.State()
 	shared = dcb.extract()
@@ -208,11 +208,6 @@ func (dcb *DistributedCircuitBreaker[T]) State() (state State, err error) {
 
 // Execute runs the given request if the DistributedCircuitBreaker accepts it.
 func (dcb *DistributedCircuitBreaker[T]) Execute(req func() (T, error)) (t T, err error) {
-	shared, err := dcb.getSharedState()
-	if err != nil {
-		return t, err
-	}
-
 	err = dcb.lock()
 	if err != nil {
 		return t, err
@@ -223,6 +218,11 @@ func (dcb *DistributedCircuitBreaker[T]) Execute(req func() (T, error)) (t T, er
 			err = e
 		}
 	}()
+
+	shared, err := dcb.getSharedState()
+	if err != nil {
+		return t, err
+	}
 
 	dcb.inject(shared)
 	t, err = dcb.CircuitBreaker.Execute(req)
