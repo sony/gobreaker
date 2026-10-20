@@ -465,3 +465,50 @@ func TestDistributedCircuitBreakerBucketIndexingConsistency(t *testing.T) {
 	assert.True(t, state1.Age >= expectedAge-1 && state1.Age <= expectedAge+1,
 		"Age should be calculated from shared start time")
 }
+
+// lockHookStore is a MockStore that runs a hook the first time Lock is called,
+// before the lock is granted. It simulates another instance updating the
+// shared state while this instance is waiting for the lock.
+type lockHookStore struct {
+	*MockStore
+	beforeLock func()
+}
+
+func (s *lockHookStore) Lock(name string) error {
+	if hook := s.beforeLock; hook != nil {
+		s.beforeLock = nil
+		hook()
+	}
+	return s.MockStore.Lock(name)
+}
+
+func TestDistributedCircuitBreakerReadsSharedStateUnderLock(t *testing.T) {
+	store := &lockHookStore{MockStore: NewMockStore()}
+	settings := Settings{Name: "LockTest"}
+
+	dcb1, err := NewDistributedCircuitBreaker[any](store, settings)
+	assert.NoError(t, err)
+	dcb2, err := NewDistributedCircuitBreaker[any](store, settings)
+	assert.NoError(t, err)
+
+	// dcb2 records a failure while dcb1 is waiting for the lock.
+	store.beforeLock = func() {
+		assert.NoError(t, failRequest(dcb2))
+	}
+	assert.NoError(t, failRequest(dcb1))
+
+	state, err := dcb1.getSharedState()
+	assert.NoError(t, err)
+	assert.Equal(t, Counts{Requests: 2, TotalFailures: 2, ConsecutiveFailures: 2}, state.Counts)
+
+	// The same applies to State.
+	store.beforeLock = func() {
+		assert.NoError(t, failRequest(dcb2))
+	}
+	_, err = dcb1.State()
+	assert.NoError(t, err)
+
+	state, err = dcb1.getSharedState()
+	assert.NoError(t, err)
+	assert.Equal(t, Counts{Requests: 3, TotalFailures: 3, ConsecutiveFailures: 3}, state.Counts)
+}
