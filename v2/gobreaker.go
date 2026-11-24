@@ -24,6 +24,10 @@ var (
 	ErrTooManyRequests = errors.New("too many requests")
 	// ErrOpenState is returned when the CB state is open
 	ErrOpenState = errors.New("circuit breaker is open")
+	// ErrRecovering is returned when the CB is closed but still recovering
+	// and the request is not in the share of requests it lets through at the current step.
+	// It wraps ErrTooManyRequests.
+	ErrRecovering = fmt.Errorf("circuit breaker is recovering: %w", ErrTooManyRequests)
 )
 
 // String implements stringer interface.
@@ -80,6 +84,10 @@ func (s State) String() string {
 // This can be used, for example, to ignore context cancellations or
 // other errors that should not affect the circuit breaker state.
 // If IsExcluded is nil, no requests are excluded.
+//
+// Recovery enables gradual recovery: after the half-open state, the CircuitBreaker
+// lets requests back in steps instead of all at once. See Recovery.
+// If Recovery is nil, the CircuitBreaker lets all requests through as soon as it closes.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -90,6 +98,7 @@ type Settings struct {
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
 	IsExcluded    func(err error) bool
+	Recovery      *Recovery
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
@@ -103,6 +112,7 @@ type CircuitBreaker[T any] struct {
 	isSuccessful  func(err error) bool
 	isExcluded    func(err error) bool
 	onStateChange func(name string, from State, to State)
+	recovery      *recovery
 
 	mutex      sync.Mutex
 	state      State
@@ -165,6 +175,8 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 	} else {
 		cb.isExcluded = st.IsExcluded
 	}
+
+	cb.recovery = newRecovery(st.Recovery)
 
 	cb.toNewGeneration(time.Now())
 
@@ -238,6 +250,7 @@ func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 type admission struct {
 	generation uint64
 	age        uint64
+	step       int // recovery step the request was let through at, or notRecovering
 }
 
 func (cb *CircuitBreaker[T]) beforeRequest() (admission, error) {
@@ -246,12 +259,18 @@ func (cb *CircuitBreaker[T]) beforeRequest() (admission, error) {
 
 	now := time.Now()
 	state, generation, age := cb.currentState(now)
-	adm := admission{generation: generation, age: age}
+	adm := admission{generation: generation, age: age, step: notRecovering}
 
 	if state == StateOpen {
 		return adm, ErrOpenState
 	} else if state == StateHalfOpen && cb.counts.validRequests() >= cb.maxRequests {
 		return adm, ErrTooManyRequests
+	} else if state == StateClosed && cb.recovery != nil {
+		step, ok := cb.recovery.admit(now)
+		if !ok {
+			return adm, ErrRecovering
+		}
+		adm.step = step
 	}
 
 	cb.counts.onRequest()
@@ -274,18 +293,21 @@ func (cb *CircuitBreaker[T]) afterRequest(adm admission, err error) {
 	}
 
 	if cb.isSuccessful(err) {
-		cb.onSuccess(state, adm.age, now)
+		cb.onSuccess(state, adm, now)
 	} else {
 		cb.onFailure(state, adm.age, now)
 	}
 }
 
-func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {
+func (cb *CircuitBreaker[T]) onSuccess(state State, adm admission, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onSuccess(age)
+		cb.counts.onSuccess(adm.age)
+		if cb.recovery != nil {
+			cb.recovery.onSuccess(adm.step)
+		}
 	case StateHalfOpen:
-		cb.counts.onSuccess(age)
+		cb.counts.onSuccess(adm.age)
 		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
 			cb.setState(StateClosed, now)
 		}
@@ -316,6 +338,9 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		} else if len(cb.counts.buckets) >= 2 {
 			cb.counts.grow(cb.age(now))
 		}
+		if cb.recovery != nil {
+			cb.recovery.update(now)
+		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
 			cb.setState(StateHalfOpen, now)
@@ -344,6 +369,10 @@ func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
 
 	prev := cb.state
 	cb.state = state
+
+	if cb.recovery != nil {
+		cb.recovery.onStateChange(state, now)
+	}
 
 	cb.toNewGeneration(now)
 
