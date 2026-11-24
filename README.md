@@ -124,6 +124,9 @@ Requests outside the current share get `ErrRecovering`, which wraps `ErrTooManyR
 After a trip during recovery, the next recovery starts one step below the lowest step that failed.
 All instances of a `DistributedCircuitBreaker` must use the same `Recovery`.
 
+See [the Postgres example](https://github.com/sony/gobreaker/blob/master/v2/example/postgres)
+for a database that passes the half-open requests but cannot take the full load.
+
 `CircuitBreaker` can wrap any function to send a request:
 
 ```go
