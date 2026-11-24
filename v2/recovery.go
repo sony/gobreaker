@@ -16,6 +16,8 @@ import (
 // After a trip during recovery, the next recovery starts one step below the lowest step that failed.
 // Recovery ends, and forgets that step, once the full load has lasted one more step.
 // This is not a rate limit: there is no requests-per-second ceiling.
+//
+// All instances of a DistributedCircuitBreaker must use the same Recovery.
 type Recovery struct {
 	// Steps are the shares of requests let through, one per step, each greater than 0 and less than 1;
 	// others are ignored. If no share is valid, 0.05, 0.1, 0.25, 0.5 and 0.75 are used.
@@ -31,6 +33,7 @@ type Recovery struct {
 }
 
 // RecoveryState is the progress of gradual recovery.
+// DistributedCircuitBreaker keeps it in SharedState.
 type RecoveryState struct {
 	// Active is true while the CircuitBreaker is closed and recovering.
 	Active bool `json:"active"`
@@ -133,7 +136,12 @@ func scaleShare(share float64) uint64 {
 // and a request let through at it has succeeded.
 // After the step at the full load it ends recovery and forgets the failed step.
 func (r *recovery) update(now time.Time) {
-	if !r.state.Active || !r.state.StepSucceeded || now.Sub(r.state.StepStart) < r.stepDuration {
+	if !r.state.Active {
+		return
+	}
+	// A step shared by an instance with other Steps may be out of range.
+	r.state.Step = min(max(r.state.Step, 0), len(r.shares))
+	if !r.state.StepSucceeded || now.Sub(r.state.StepStart) < r.stepDuration {
 		return
 	}
 
@@ -147,7 +155,7 @@ func (r *recovery) update(now time.Time) {
 }
 
 func (r *recovery) startStep(step int, now time.Time) {
-	r.state.Step = step
+	r.state.Step = min(max(step, 0), len(r.shares))
 	r.state.StepStart = now
 	r.state.StepSucceeded = false
 	r.state.Seq = 0

@@ -472,3 +472,153 @@ func TestTwoStepRecovery(t *testing.T) {
 	}
 	assert.InDelta(t, 100, passed, 2)
 }
+
+func TestRecoveryStepOutOfRange(t *testing.T) {
+	// An instance with more Steps shared a step this one does not have.
+	r := newRecovery(&testRecovery)
+	now := time.Now()
+	r.state = RecoveryState{Active: true, Step: 9, StepStart: now, Failed: notRecovering}
+
+	step, ok := r.admit(now)
+	assert.Equal(t, len(testRecovery.Steps), step)
+	assert.True(t, ok)
+	r.onSuccess(step)
+	r.update(now.Add(testRecovery.StepDuration))
+	assert.False(t, r.state.Active)
+
+	r.state = RecoveryState{Resume: -3, Failed: notRecovering}
+	r.onStateChange(StateClosed, now)
+	assert.Equal(t, 0, r.state.Step)
+}
+
+func TestDistributedRecovery(t *testing.T) {
+	store := NewMockStore()
+	recovery := testRecovery
+	st := Settings{
+		Name:        "TestRecovery",
+		MaxRequests: 1,
+		Timeout:     2 * time.Second,
+		Recovery:    &recovery,
+	}
+	dcb1, err := NewDistributedCircuitBreaker[any](store, st)
+	require.NoError(t, err)
+	dcb2, err := NewDistributedCircuitBreaker[any](store, st)
+	require.NoError(t, err)
+
+	shared, err := dcb1.getSharedState()
+	require.NoError(t, err)
+	require.NotNil(t, shared.Recovery)
+	assert.False(t, shared.Recovery.Active)
+
+	for i := 0; i < 6; i++ {
+		assert.NoError(t, failRequest(dcb1))
+	}
+	assertState(t, dcb1, StateOpen)
+
+	dcbPseudoSleep(dcb1, st.Timeout+time.Millisecond)
+	assertState(t, dcb1, StateHalfOpen)
+	assert.NoError(t, successRequest(dcb1))
+	assertState(t, dcb1, StateClosed)
+
+	// The other instance follows the recovery started by the first one.
+	passed := 0
+	for i := 0; i < 1000; i++ {
+		err := successRequest(dcb2)
+		if err == nil {
+			passed++
+			continue
+		}
+		assert.ErrorIs(t, err, ErrRecovering)
+	}
+	assert.InDelta(t, 100, passed, 2)
+
+	shared, err = dcb1.getSharedState()
+	require.NoError(t, err)
+	require.NotNil(t, shared.Recovery)
+	assert.True(t, shared.Recovery.Active)
+	assert.True(t, shared.Recovery.StepSucceeded)
+	assert.Equal(t, uint64(1000), shared.Recovery.Seq)
+
+	// Without Recovery, the shared state has none.
+	plain, err := NewDistributedCircuitBreaker[any](NewMockStore(), Settings{Name: "plain"})
+	require.NoError(t, err)
+	shared, err = plain.getSharedState()
+	require.NoError(t, err)
+	assert.Nil(t, shared.Recovery)
+	data, err := plain.store.GetData(plain.sharedStateKey())
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), `"recovery"`, "other instances read the same JSON as before")
+}
+
+// dcbStepSleep moves the start of the shared recovery step back by period.
+func dcbStepSleep(t *testing.T, dcb *DistributedCircuitBreaker[any], period time.Duration) {
+	t.Helper()
+	shared, err := dcb.getSharedState()
+	require.NoError(t, err)
+	require.NotNil(t, shared.Recovery)
+	shared.Recovery.StepStart = shared.Recovery.StepStart.Add(-period)
+	require.NoError(t, dcb.setSharedState(shared))
+}
+
+// dcbLetThrough sends n successful requests and returns how many the breaker let through.
+func dcbLetThrough(t *testing.T, dcb *DistributedCircuitBreaker[any], n int) int {
+	t.Helper()
+	passed := 0
+	for i := 0; i < n; i++ {
+		err := successRequest(dcb)
+		if err == nil {
+			passed++
+			continue
+		}
+		require.ErrorIs(t, err, ErrRecovering)
+	}
+	return passed
+}
+
+func TestDistributedRecoveryLearnsStep(t *testing.T) {
+	store := NewMockStore()
+	recovery := testRecovery
+	st := Settings{
+		Name:        "TestRecoveryLearns",
+		MaxRequests: 1,
+		Timeout:     2 * time.Second,
+		Recovery:    &recovery,
+	}
+	dcb1, err := NewDistributedCircuitBreaker[any](store, st)
+	require.NoError(t, err)
+	dcb2, err := NewDistributedCircuitBreaker[any](store, st)
+	require.NoError(t, err)
+
+	for i := 0; i < 6; i++ {
+		require.NoError(t, failRequest(dcb1))
+	}
+	dcbPseudoSleep(dcb1, st.Timeout+time.Millisecond)
+	assertState(t, dcb1, StateHalfOpen)
+	require.NoError(t, successRequest(dcb1))
+	assertState(t, dcb1, StateClosed)
+
+	// The first instance takes recovery up to 50%, where a request fails and trips the breaker.
+	for step := 0; step < 2; step++ {
+		for dcbLetThrough(t, dcb1, 1) == 0 {
+		}
+		dcbStepSleep(t, dcb1, time.Second)
+	}
+	for {
+		err := failRequest(dcb1)
+		if err == nil {
+			break
+		}
+		require.ErrorIs(t, err, ErrRecovering)
+	}
+	assertState(t, dcb2, StateOpen)
+
+	// The second instance closes the breaker again, and recovery resumes at 25%, below the failed step.
+	dcbPseudoSleep(dcb2, st.Timeout+time.Millisecond)
+	assertState(t, dcb2, StateHalfOpen)
+	require.NoError(t, successRequest(dcb2))
+	assertState(t, dcb2, StateClosed)
+	assert.InDelta(t, 250, dcbLetThrough(t, dcb2, 1000), 2)
+	shared, err := dcb2.getSharedState()
+	require.NoError(t, err)
+	assert.Equal(t, 1, shared.Recovery.Step)
+}
