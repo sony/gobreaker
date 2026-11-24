@@ -27,6 +27,9 @@ func pseudoSleep(cb *CircuitBreaker[bool], period time.Duration) {
 	if !cb.expiry.IsZero() {
 		cb.expiry = cb.expiry.Add(-period)
 	}
+	if cb.recovery != nil && cb.recovery.state.Active {
+		cb.recovery.state.StepStart = cb.recovery.state.StepStart.Add(-period)
+	}
 }
 
 func succeed(cb *CircuitBreaker[bool]) error {

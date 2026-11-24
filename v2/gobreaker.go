@@ -24,6 +24,10 @@ var (
 	ErrTooManyRequests = errors.New("too many requests")
 	// ErrOpenState is returned when the CB state is open
 	ErrOpenState = errors.New("circuit breaker is open")
+	// ErrRecovering is returned when the CB is closed but still recovering
+	// and the request is not in the share of requests it lets through at the current step.
+	// It wraps ErrTooManyRequests.
+	ErrRecovering = fmt.Errorf("circuit breaker is recovering: %w", ErrTooManyRequests)
 )
 
 // String implements stringer interface.
@@ -80,6 +84,10 @@ func (s State) String() string {
 // This can be used, for example, to ignore context cancellations or
 // other errors that should not affect the circuit breaker state.
 // If IsExcluded is nil, no requests are excluded.
+//
+// Recovery enables gradual recovery: after the half-open state, the CircuitBreaker
+// lets requests back in steps instead of all at once. See Recovery.
+// If Recovery is nil, the CircuitBreaker lets all requests through as soon as it closes.
 type Settings struct {
 	Name          string
 	MaxRequests   uint32
@@ -90,6 +98,7 @@ type Settings struct {
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
 	IsExcluded    func(err error) bool
+	Recovery      *Recovery
 }
 
 // CircuitBreaker is a state machine to prevent sending requests that are likely to fail.
@@ -103,6 +112,7 @@ type CircuitBreaker[T any] struct {
 	isSuccessful  func(err error) bool
 	isExcluded    func(err error) bool
 	onStateChange func(name string, from State, to State)
+	recovery      *recovery
 
 	mutex      sync.Mutex
 	state      State
@@ -166,6 +176,8 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 		cb.isExcluded = st.IsExcluded
 	}
 
+	cb.recovery = newRecovery(st.Recovery)
+
 	cb.toNewGeneration(time.Now())
 
 	return cb
@@ -215,7 +227,7 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
 func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
-	generation, age, err := cb.beforeRequest()
+	adm, err := cb.beforeRequest()
 	if err != nil {
 		var defaultValue T
 		return defaultValue, err
@@ -224,72 +236,93 @@ func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, age, fmt.Errorf("%v", e))
+			cb.afterRequest(adm, fmt.Errorf("%v", e))
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, age, err)
+	cb.afterRequest(adm, err)
 	return result, err
 }
 
-func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
+// admission identifies a request the CircuitBreaker let through.
+type admission struct {
+	generation uint64
+	age        uint64
+	step       int // recovery step the request was let through at, or notRecovering
+}
+
+func (cb *CircuitBreaker[T]) beforeRequest() (admission, error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation, age := cb.currentState(now)
+	adm := admission{generation: generation, age: age, step: notRecovering}
 
 	if state == StateOpen {
-		return generation, age, ErrOpenState
+		return adm, ErrOpenState
 	} else if state == StateHalfOpen && cb.counts.validRequests() >= cb.maxRequests {
-		return generation, age, ErrTooManyRequests
+		return adm, ErrTooManyRequests
+	} else if state == StateClosed && cb.recovery != nil {
+		step, ok := cb.recovery.admit(now)
+		if !ok {
+			return adm, ErrRecovering
+		}
+		adm.step = step
 	}
 
 	cb.counts.onRequest()
-	return generation, age, nil
+	return adm, nil
 }
 
-func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, err error) {
+func (cb *CircuitBreaker[T]) afterRequest(adm admission, err error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation, _ := cb.currentState(now)
-	if generation != previous {
+	if generation != adm.generation {
 		return
 	}
 
 	if cb.isExcluded(err) {
-		cb.onExclusion(age)
+		cb.onExclusion(adm.age)
 		return
 	}
 
 	if cb.isSuccessful(err) {
-		cb.onSuccess(state, age, now)
+		cb.onSuccess(state, adm, now)
 	} else {
-		cb.onFailure(state, age, now)
+		cb.onFailure(state, adm, now)
 	}
 }
 
-func (cb *CircuitBreaker[T]) onSuccess(state State, age uint64, now time.Time) {
+func (cb *CircuitBreaker[T]) onSuccess(state State, adm admission, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onSuccess(age)
+		cb.counts.onSuccess(adm.age)
+		if cb.recovery != nil {
+			cb.recovery.onSuccess(adm.step)
+		}
 	case StateHalfOpen:
-		cb.counts.onSuccess(age)
+		cb.counts.onSuccess(adm.age)
 		if cb.counts.ConsecutiveSuccesses >= cb.maxRequests {
 			cb.setState(StateClosed, now)
 		}
 	}
 }
 
-func (cb *CircuitBreaker[T]) onFailure(state State, age uint64, now time.Time) {
+func (cb *CircuitBreaker[T]) onFailure(state State, adm admission, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onFailure(age)
-		if cb.readyToTrip(cb.counts.Counts) {
+		cb.counts.onFailure(adm.age)
+		readyToTrip := cb.readyToTrip
+		if cb.recovery != nil && cb.recovery.onFailure(adm.step) {
+			readyToTrip = cb.recovery.readyToTrip
+		}
+		if readyToTrip(cb.counts.Counts) {
 			cb.setState(StateOpen, now)
 		}
 	case StateHalfOpen:
@@ -304,7 +337,11 @@ func (cb *CircuitBreaker[T]) onExclusion(age uint64) {
 func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64) {
 	switch cb.state {
 	case StateClosed:
-		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
+		if cb.recovery != nil {
+			// Recovery may end here; then the clearing it put off comes before the next request.
+			cb.recovery.update(now)
+		}
+		if !cb.expiry.IsZero() && cb.expiry.Before(now) && !cb.recovering() {
 			cb.toNewGeneration(now)
 		} else if len(cb.counts.buckets) >= 2 {
 			cb.counts.grow(cb.age(now))
@@ -315,6 +352,11 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		}
 	}
 	return cb.state, cb.generation, cb.counts.age
+}
+
+// recovering reports whether the CircuitBreaker is closed and recovering.
+func (cb *CircuitBreaker[T]) recovering() bool {
+	return cb.recovery != nil && cb.recovery.state.Active
 }
 
 func (cb *CircuitBreaker[T]) age(now time.Time) uint64 {
@@ -337,6 +379,10 @@ func (cb *CircuitBreaker[T]) setState(state State, now time.Time) {
 
 	prev := cb.state
 	cb.state = state
+
+	if cb.recovery != nil {
+		cb.recovery.onStateChange(state, now)
+	}
 
 	cb.toNewGeneration(now)
 

@@ -22,6 +22,8 @@ type SharedState struct {
 	Buckets    []Counts  `json:"buckets"`
 	Start      time.Time `json:"start"`
 	Expiry     time.Time `json:"expiry"`
+	// Recovery is nil when Settings.Recovery is nil.
+	Recovery *RecoveryState `json:"recovery,omitempty"`
 }
 
 // SharedDataStore stores the shared state of DistributedCircuitBreaker.
@@ -151,6 +153,13 @@ func (dcb *DistributedCircuitBreaker[T]) inject(shared SharedState) {
 	dcb.counts.buckets = copyBuckets(shared.Buckets)
 	dcb.start = shared.Start
 	dcb.expiry = shared.Expiry
+	if dcb.recovery != nil {
+		if shared.Recovery != nil {
+			dcb.recovery.state = *shared.Recovery
+		} else {
+			dcb.recovery.state = RecoveryState{Failed: notRecovering}
+		}
+	}
 }
 
 func copyBuckets(buckets []Counts) []Counts {
@@ -175,6 +184,10 @@ func (dcb *DistributedCircuitBreaker[T]) extract() SharedState {
 		Buckets:    copyBuckets(dcb.counts.buckets),
 		Start:      dcb.start,
 		Expiry:     dcb.expiry,
+	}
+	if dcb.recovery != nil {
+		recovery := dcb.recovery.state
+		state.Recovery = &recovery
 	}
 
 	return state
