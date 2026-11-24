@@ -11,6 +11,8 @@ import (
 //
 // At each step it lets through a share of requests and rejects the rest with ErrRecovering.
 // A step ends once it has lasted StepDuration and a request let through at it has succeeded.
+// The first failure during recovery trips the CircuitBreaker, unless ReadyToTrip says otherwise,
+// and Counts are not cleared at Interval during recovery.
 // Recovery ends after the last step.
 // This is not a rate limit: there is no requests-per-second ceiling.
 type Recovery struct {
@@ -21,6 +23,10 @@ type Recovery struct {
 	// StepDuration is the minimum length of a step; it is 5 seconds if not positive.
 	// Make it longer than the time a request takes to fail.
 	StepDuration time.Duration
+
+	// ReadyToTrip replaces Settings.ReadyToTrip during recovery.
+	// If it is nil, the first failure during recovery trips the CircuitBreaker.
+	ReadyToTrip func(counts Counts) bool
 }
 
 // RecoveryState is the progress of gradual recovery.
@@ -54,7 +60,12 @@ type recovery struct {
 	shares       []float64
 	thresholds   []uint64 // shares scaled to [0, 2^64)
 	stepDuration time.Duration
+	readyToTrip  func(counts Counts) bool
 	state        RecoveryState
+}
+
+func tripOnFirstFailure(_ Counts) bool {
+	return true
 }
 
 func newRecovery(r *Recovery) *recovery {
@@ -77,10 +88,16 @@ func newRecovery(r *Recovery) *recovery {
 		stepDuration = defaultRecoveryStepDuration
 	}
 
+	readyToTrip := r.ReadyToTrip
+	if readyToTrip == nil {
+		readyToTrip = tripOnFirstFailure
+	}
+
 	return &recovery{
 		shares:       shares,
 		thresholds:   thresholds,
 		stepDuration: stepDuration,
+		readyToTrip:  readyToTrip,
 	}
 }
 

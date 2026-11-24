@@ -318,7 +318,11 @@ func (cb *CircuitBreaker[T]) onFailure(state State, age uint64, now time.Time) {
 	switch state {
 	case StateClosed:
 		cb.counts.onFailure(age)
-		if cb.readyToTrip(cb.counts.Counts) {
+		readyToTrip := cb.readyToTrip
+		if cb.recovering() {
+			readyToTrip = cb.recovery.readyToTrip
+		}
+		if readyToTrip(cb.counts.Counts) {
 			cb.setState(StateOpen, now)
 		}
 	case StateHalfOpen:
@@ -333,13 +337,14 @@ func (cb *CircuitBreaker[T]) onExclusion(age uint64) {
 func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64) {
 	switch cb.state {
 	case StateClosed:
-		if !cb.expiry.IsZero() && cb.expiry.Before(now) {
+		if cb.recovery != nil {
+			// Recovery may end here; then the clearing it put off comes before the next request.
+			cb.recovery.update(now)
+		}
+		if !cb.expiry.IsZero() && cb.expiry.Before(now) && !cb.recovering() {
 			cb.toNewGeneration(now)
 		} else if len(cb.counts.buckets) >= 2 {
 			cb.counts.grow(cb.age(now))
-		}
-		if cb.recovery != nil {
-			cb.recovery.update(now)
 		}
 	case StateOpen:
 		if cb.expiry.Before(now) {
@@ -347,6 +352,11 @@ func (cb *CircuitBreaker[T]) currentState(now time.Time) (State, uint64, uint64)
 		}
 	}
 	return cb.state, cb.generation, cb.counts.age
+}
+
+// recovering reports whether the CircuitBreaker is closed and recovering.
+func (cb *CircuitBreaker[T]) recovering() bool {
+	return cb.recovery != nil && cb.recovery.state.Active
 }
 
 func (cb *CircuitBreaker[T]) age(now time.Time) uint64 {

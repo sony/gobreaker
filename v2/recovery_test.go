@@ -62,6 +62,28 @@ func letThrough(t *testing.T, cb *CircuitBreaker[bool], n int) int {
 	return passed
 }
 
+// failLetThrough sends failing requests until n of them are let through.
+func failLetThrough(t *testing.T, cb *CircuitBreaker[bool], n int) {
+	t.Helper()
+	for passed := 0; passed < n; {
+		err := fail(cb)
+		if err == nil {
+			passed++
+			continue
+		}
+		require.ErrorIs(t, err, ErrRecovering)
+	}
+}
+
+// nextStep makes a request at the current step succeed and waits the step out;
+// recovery moves to the next step with the next request.
+func nextStep(t *testing.T, cb *CircuitBreaker[bool]) {
+	t.Helper()
+	for letThrough(t, cb, 1) == 0 {
+	}
+	pseudoSleep(cb, testRecovery.StepDuration)
+}
+
 func TestNewRecovery(t *testing.T) {
 	assert.Nil(t, newRecovery(nil))
 	assert.Nil(t, NewCircuitBreaker[bool](Settings{}).recovery)
@@ -205,6 +227,81 @@ func TestRecoveryLetsAlternatingCallersThroughEqually(t *testing.T) {
 		assert.InDelta(t, share*1000, b, 0.02*1000, "caller B at step %d", step)
 		pseudoSleep(cb, time.Second)
 	}
+}
+
+func TestRecoveryTripsOnFirstFailure(t *testing.T) {
+	cb := NewCircuitBreaker[bool](recoverySettings())
+	tripAndClose(t, cb)
+
+	// Settings.ReadyToTrip needs more than 5 consecutive failures; during recovery one is enough.
+	assert.InDelta(t, 100, letThrough(t, cb, 1000), 2)
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, StateOpen, cb.State())
+}
+
+func TestRecoveryKeepsCountsAcrossInterval(t *testing.T) {
+	st := recoverySettings()
+	st.Interval = time.Second // a fixed window
+	tscb := NewTwoStepCircuitBreaker[bool](st)
+	cb := tscb.cb
+	tripAndClose(t, cb)
+
+	// A request let through during recovery fails after the window has passed:
+	// the failure is not dropped with the window, and it trips the CircuitBreaker.
+	done, err := tscb.Allow()
+	require.NoError(t, err)
+	pseudoSleep(cb, 2*time.Second)
+	assert.Equal(t, StateClosed, cb.State())
+	done(errFailed)
+	assert.Equal(t, StateOpen, cb.State())
+
+	// After recovery the window clears Counts at Interval again, as without Recovery.
+	// The clearing put off during recovery comes first, so the first request after recovery counts.
+	reopenAndClose(t, cb)
+	for i := 0; i <= len(testRecovery.Steps); i++ {
+		nextStep(t, cb)
+	}
+	require.NoError(t, fail(cb))
+	require.False(t, cb.recovery.state.Active)
+	assert.Equal(t, Counts{Requests: 1, TotalFailures: 1, ConsecutiveFailures: 1}, cb.Counts())
+	pseudoSleep(cb, time.Second+time.Millisecond)
+	assert.Equal(t, StateClosed, cb.State())
+	assert.Equal(t, Counts{}, cb.Counts())
+}
+
+func TestRecoveryReadyToTrip(t *testing.T) {
+	st := recoverySettings()
+	var seen []Counts
+	st.Recovery.ReadyToTrip = func(counts Counts) bool {
+		seen = append(seen, counts)
+		return counts.Requests >= 20 && counts.TotalFailures*2 > counts.Requests
+	}
+	cb := NewCircuitBreaker[bool](st)
+
+	// Outside recovery Settings.ReadyToTrip decides.
+	tripAndClose(t, cb)
+	assert.Empty(t, seen)
+
+	// During recovery Recovery.ReadyToTrip decides, and it tolerates a few failures.
+	// 1 of 20 requests let through succeeds: Counts hold only them, not the rejected ones.
+	assert.NoError(t, succeed(cb))
+	failLetThrough(t, cb, 18)
+	assert.Equal(t, StateClosed, cb.State())
+	assert.Len(t, seen, 18)
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, Counts{Requests: 20, TotalSuccesses: 1, TotalFailures: 19, ConsecutiveFailures: 19}, seen[len(seen)-1])
+
+	// After recovery Settings.ReadyToTrip decides again.
+	reopenAndClose(t, cb)
+	seen = nil
+	for i := 0; i <= len(testRecovery.Steps); i++ {
+		nextStep(t, cb)
+	}
+	assert.Equal(t, 100, letThrough(t, cb, 100))
+	assert.False(t, cb.recovery.state.Active)
+	assert.NoError(t, fail(cb))
+	assert.Empty(t, seen)
 }
 
 func TestTwoStepRecovery(t *testing.T) {
