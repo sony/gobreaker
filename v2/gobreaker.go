@@ -215,7 +215,7 @@ func (cb *CircuitBreaker[T]) Counts() Counts {
 // If a panic occurs in the request, the CircuitBreaker handles it as an error
 // and causes the same panic again.
 func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
-	generation, age, err := cb.beforeRequest()
+	adm, err := cb.beforeRequest()
 	if err != nil {
 		var defaultValue T
 		return defaultValue, err
@@ -224,52 +224,59 @@ func (cb *CircuitBreaker[T]) Execute(req func() (T, error)) (T, error) {
 	defer func() {
 		e := recover()
 		if e != nil {
-			cb.afterRequest(generation, age, fmt.Errorf("%v", e))
+			cb.afterRequest(adm, fmt.Errorf("%v", e))
 			panic(e)
 		}
 	}()
 
 	result, err := req()
-	cb.afterRequest(generation, age, err)
+	cb.afterRequest(adm, err)
 	return result, err
 }
 
-func (cb *CircuitBreaker[T]) beforeRequest() (uint64, uint64, error) {
+// admission identifies a request the CircuitBreaker let through.
+type admission struct {
+	generation uint64
+	age        uint64
+}
+
+func (cb *CircuitBreaker[T]) beforeRequest() (admission, error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation, age := cb.currentState(now)
+	adm := admission{generation: generation, age: age}
 
 	if state == StateOpen {
-		return generation, age, ErrOpenState
+		return adm, ErrOpenState
 	} else if state == StateHalfOpen && cb.counts.validRequests() >= cb.maxRequests {
-		return generation, age, ErrTooManyRequests
+		return adm, ErrTooManyRequests
 	}
 
 	cb.counts.onRequest()
-	return generation, age, nil
+	return adm, nil
 }
 
-func (cb *CircuitBreaker[T]) afterRequest(previous uint64, age uint64, err error) {
+func (cb *CircuitBreaker[T]) afterRequest(adm admission, err error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
 	now := time.Now()
 	state, generation, _ := cb.currentState(now)
-	if generation != previous {
+	if generation != adm.generation {
 		return
 	}
 
 	if cb.isExcluded(err) {
-		cb.onExclusion(age)
+		cb.onExclusion(adm.age)
 		return
 	}
 
 	if cb.isSuccessful(err) {
-		cb.onSuccess(state, age, now)
+		cb.onSuccess(state, adm.age, now)
 	} else {
-		cb.onFailure(state, age, now)
+		cb.onFailure(state, adm.age, now)
 	}
 }
 

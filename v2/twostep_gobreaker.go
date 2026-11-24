@@ -34,12 +34,12 @@ func (tscb *TwoStepCircuitBreaker[T]) Counts() Counts {
 // used to register the error object that the request will return in a separate step.
 // If the circuit breaker does not allow the request, it returns an error.
 func (tscb *TwoStepCircuitBreaker[T]) Allow() (done func(err error), err error) {
-	generation, age, err := tscb.cb.beforeRequest()
+	adm, err := tscb.cb.beforeRequest()
 	if err != nil {
 		return nil, err
 	}
 
 	return func(err error) {
-		tscb.cb.afterRequest(generation, age, err)
+		tscb.cb.afterRequest(adm, err)
 	}, nil
 }
