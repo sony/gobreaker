@@ -36,6 +36,7 @@ type Settings struct {
 	OnStateChange func(name string, from State, to State)
 	IsSuccessful  func(err error) bool
 	IsExcluded    func(err error) bool
+	Recovery      *Recovery
 }
 ```
 
@@ -78,6 +79,9 @@ type Settings struct {
   other errors that should not affect the circuit breaker state.
   If `IsExcluded` is nil, no requests are excluded.
 
+- `Recovery` enables gradual recovery, described below.
+  If `Recovery` is nil, `CircuitBreaker` behaves as before.
+
 The struct `Counts` holds the numbers of requests and their successes/failures/exclusions:
 
 ```go
@@ -94,6 +98,31 @@ type Counts struct {
 `CircuitBreaker` clears the internal `Counts` either
 on the change of the state or at the closed-state intervals.
 `Counts` ignores the results of the requests sent before clearing.
+
+### Gradual recovery
+
+Without `Recovery`, `CircuitBreaker` sends the full load as soon as the half-open requests succeed,
+even to a service that answers a few requests but cannot take the full load yet.
+With `Recovery`, it closes in steps, so such a service fails at a low step, before the full load reaches it:
+
+```go
+type Recovery struct {
+	Steps        []float64
+	StepDuration time.Duration
+	ReadyToTrip  func(counts Counts) bool
+}
+```
+
+- `Steps` are the shares of requests let through, one per step, each greater than 0 and less than 1.
+  By default they are 0.05, 0.1, 0.25, 0.5 and 0.75.
+- `StepDuration` is the minimum length of a step, 5 seconds by default.
+  A step ends once it has lasted `StepDuration` and a request let through at it has succeeded.
+- `ReadyToTrip` replaces `Settings.ReadyToTrip` during recovery.
+  If it is nil, the first failure during recovery trips `CircuitBreaker`.
+
+Requests outside the current share get `ErrRecovering`, which wraps `ErrTooManyRequests`.
+After a trip during recovery, the next recovery starts one step below the lowest step that failed.
+All instances of a `DistributedCircuitBreaker` must use the same `Recovery`.
 
 `CircuitBreaker` can wrap any function to send a request:
 
