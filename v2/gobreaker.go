@@ -295,7 +295,7 @@ func (cb *CircuitBreaker[T]) afterRequest(adm admission, err error) {
 	if cb.isSuccessful(err) {
 		cb.onSuccess(state, adm, now)
 	} else {
-		cb.onFailure(state, adm.age, now)
+		cb.onFailure(state, adm, now)
 	}
 }
 
@@ -314,12 +314,12 @@ func (cb *CircuitBreaker[T]) onSuccess(state State, adm admission, now time.Time
 	}
 }
 
-func (cb *CircuitBreaker[T]) onFailure(state State, age uint64, now time.Time) {
+func (cb *CircuitBreaker[T]) onFailure(state State, adm admission, now time.Time) {
 	switch state {
 	case StateClosed:
-		cb.counts.onFailure(age)
+		cb.counts.onFailure(adm.age)
 		readyToTrip := cb.readyToTrip
-		if cb.recovering() {
+		if cb.recovery != nil && cb.recovery.onFailure(adm.step) {
 			readyToTrip = cb.recovery.readyToTrip
 		}
 		if readyToTrip(cb.counts.Counts) {

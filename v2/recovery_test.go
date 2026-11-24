@@ -92,6 +92,7 @@ func TestNewRecovery(t *testing.T) {
 	assert.Equal(t, []float64{0.05, 0.1, 0.25, 0.5, 0.75}, r.shares)
 	assert.Equal(t, 5*time.Second, r.stepDuration)
 	assert.False(t, r.state.Active)
+	assert.Equal(t, notRecovering, r.state.Failed)
 
 	r = newRecovery(&Recovery{
 		Steps:        []float64{0.5, -1, 0, 0.1, 1, 2, 0.5, math.NaN()},
@@ -156,8 +157,15 @@ func TestRecoveryStepsUpToFullLoad(t *testing.T) {
 		pseudoSleep(cb, time.Second)
 	}
 
+	// The full load lasts one more step before recovery ends.
+	assert.Equal(t, 1000, letThrough(t, cb, 1000))
+	assert.Equal(t, len(testRecovery.Steps), cb.recovery.state.Step)
+	assert.True(t, cb.recovery.state.Active)
+
+	pseudoSleep(cb, time.Second)
 	assert.Equal(t, 1000, letThrough(t, cb, 1000))
 	assert.False(t, cb.recovery.state.Active)
+	assert.Equal(t, 0, cb.recovery.state.Resume)
 	assert.Len(t, changes, 3, "recovery does not change the state")
 }
 
@@ -205,6 +213,149 @@ func TestRecoveryCountsOnlySuccessAtCurrentStep(t *testing.T) {
 	pseudoSleep(cb, time.Minute)
 	assert.Equal(t, StateClosed, cb.State())
 	assert.Equal(t, 1, cb.recovery.state.Step)
+}
+
+func TestRecoveryResumesBelowFailedStep(t *testing.T) {
+	cb := NewCircuitBreaker[bool](recoverySettings())
+	tripAndClose(t, cb)
+	assert.Equal(t, 0, cb.recovery.state.Step)
+
+	// The service handles 10% and 25% of the load and fails at 50%: the first failure trips.
+	nextStep(t, cb)
+	nextStep(t, cb)
+	assert.InDelta(t, 50, letThrough(t, cb, 100), 2)
+	assert.Equal(t, 2, cb.recovery.state.Step)
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 1, cb.recovery.state.Resume)
+
+	// A failure in the half-open state does not change what was learned.
+	pseudoSleep(cb, cb.timeout+time.Millisecond)
+	assert.Equal(t, StateHalfOpen, cb.State())
+	assert.NoError(t, fail(cb))
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 1, cb.recovery.state.Resume)
+
+	// The next recovery starts at 25%, the highest step the service handled.
+	reopenAndClose(t, cb)
+	assert.Equal(t, 1, cb.recovery.state.Step)
+	assert.InDelta(t, 250, letThrough(t, cb, 1000), 2)
+
+	// It fails at 25% this time: the next recovery starts one step lower.
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 0, cb.recovery.state.Resume)
+
+	reopenAndClose(t, cb)
+	assert.Equal(t, 0, cb.recovery.state.Step)
+	assert.InDelta(t, 100, letThrough(t, cb, 1000), 2)
+
+	// A failure at the first step keeps the first step.
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 0, cb.recovery.state.Resume)
+}
+
+func TestRecoveryForgetsFailedStepAtFullLoad(t *testing.T) {
+	cb := NewCircuitBreaker[bool](recoverySettings())
+	tripAndClose(t, cb)
+	nextStep(t, cb)
+	nextStep(t, cb)
+	nextStep(t, cb)
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 2, cb.recovery.state.Resume)
+
+	reopenAndClose(t, cb)
+	assert.Equal(t, 2, cb.recovery.state.Step)
+
+	// From the third step, two steps later comes the full load, still part of recovery.
+	nextStep(t, cb)
+	nextStep(t, cb)
+	assert.Equal(t, 100, letThrough(t, cb, 100))
+	assert.Equal(t, len(testRecovery.Steps), cb.recovery.state.Step)
+	assert.True(t, cb.recovery.state.Active)
+
+	// A trip at the full load during recovery: the next recovery starts from the last partial step.
+	assert.NoError(t, fail(cb))
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 3, cb.recovery.state.Resume)
+
+	reopenAndClose(t, cb)
+	assert.Equal(t, 3, cb.recovery.state.Step)
+	assert.InDelta(t, 750, letThrough(t, cb, 1000), 2)
+
+	// Recovery that holds the full load for one step ends and forgets the failed step.
+	nextStep(t, cb)
+	nextStep(t, cb)
+	assert.Equal(t, 100, letThrough(t, cb, 100))
+	assert.False(t, cb.recovery.state.Active)
+	assert.Equal(t, 0, cb.recovery.state.Resume)
+
+	// After recovery Settings.ReadyToTrip decides again (more than 5 consecutive failures),
+	// and a trip at the full load starts the next recovery from the first step.
+	for i := 0; i < 5; i++ {
+		assert.NoError(t, fail(cb))
+	}
+	assert.Equal(t, StateClosed, cb.State())
+	assert.NoError(t, fail(cb))
+	assert.Equal(t, StateOpen, cb.State())
+	assert.Equal(t, 0, cb.recovery.state.Resume)
+	reopenAndClose(t, cb)
+	assert.Equal(t, 0, cb.recovery.state.Step)
+}
+
+func TestRecoveryLearnsStepOfAdmission(t *testing.T) {
+	tscb := NewTwoStepCircuitBreaker[bool](recoverySettings())
+	cb := tscb.cb
+	tripAndClose(t, cb)
+
+	// A slow request is let through at the third step...
+	nextStep(t, cb)
+	nextStep(t, cb)
+	done, err := tscb.Allow()
+	require.NoError(t, err)
+	assert.Equal(t, 2, cb.recovery.state.Step)
+
+	// ...and fails two steps later, at the full load.
+	nextStep(t, cb)
+	nextStep(t, cb)
+	assert.Equal(t, 100, letThrough(t, cb, 100))
+	assert.Equal(t, len(testRecovery.Steps), cb.recovery.state.Step)
+	done(errFailed)
+	assert.Equal(t, StateOpen, cb.State())
+
+	// The service failed with the load of the third step, so the next recovery starts from the second.
+	assert.Equal(t, 1, cb.recovery.state.Resume)
+}
+
+func TestRecoveryLearnsLowestFailedStep(t *testing.T) {
+	st := recoverySettings()
+	st.Recovery.ReadyToTrip = func(counts Counts) bool { return counts.TotalFailures >= 3 }
+	tscb := NewTwoStepCircuitBreaker[bool](st)
+	cb := tscb.cb
+	tripAndClose(t, cb)
+
+	// A slow request is let through at 50%.
+	nextStep(t, cb)
+	nextStep(t, cb)
+	slow, err := tscb.Allow()
+	require.NoError(t, err)
+	assert.Equal(t, 2, cb.recovery.state.Step)
+	nextStep(t, cb)
+
+	// A failure at 75% is tolerated, then the slow request fails, then a failure at the full load trips.
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, 3, cb.recovery.state.Step)
+	slow(errFailed)
+	nextStep(t, cb)
+	failLetThrough(t, cb, 1)
+	assert.Equal(t, len(testRecovery.Steps), cb.recovery.state.Step)
+	assert.Equal(t, StateOpen, cb.State())
+
+	// Neither the first failure nor the last decides but the lowest step that failed:
+	// the next recovery starts at 25%, one step below 50%.
+	assert.Equal(t, 1, cb.recovery.state.Resume)
 }
 
 func TestRecoveryLetsAlternatingCallersThroughEqually(t *testing.T) {
@@ -291,6 +442,7 @@ func TestRecoveryReadyToTrip(t *testing.T) {
 	failLetThrough(t, cb, 1)
 	assert.Equal(t, StateOpen, cb.State())
 	assert.Equal(t, Counts{Requests: 20, TotalSuccesses: 1, TotalFailures: 19, ConsecutiveFailures: 19}, seen[len(seen)-1])
+	assert.Equal(t, 0, cb.recovery.state.Resume)
 
 	// After recovery Settings.ReadyToTrip decides again.
 	reopenAndClose(t, cb)

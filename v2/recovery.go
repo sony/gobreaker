@@ -13,7 +13,8 @@ import (
 // A step ends once it has lasted StepDuration and a request let through at it has succeeded.
 // The first failure during recovery trips the CircuitBreaker, unless ReadyToTrip says otherwise,
 // and Counts are not cleared at Interval during recovery.
-// Recovery ends after the last step.
+// After a trip during recovery, the next recovery starts one step below the lowest step that failed.
+// Recovery ends, and forgets that step, once the full load has lasted one more step.
 // This is not a rate limit: there is no requests-per-second ceiling.
 type Recovery struct {
 	// Steps are the shares of requests let through, one per step, each greater than 0 and less than 1;
@@ -33,7 +34,7 @@ type Recovery struct {
 type RecoveryState struct {
 	// Active is true while the CircuitBreaker is closed and recovering.
 	Active bool `json:"active"`
-	// Step is the current step.
+	// Step is the current step; len(Steps) is the last one, at the full load.
 	Step int `json:"step"`
 	// StepStart is when the current step started.
 	StepStart time.Time `json:"step_start"`
@@ -41,6 +42,10 @@ type RecoveryState struct {
 	StepSucceeded bool `json:"step_succeeded"`
 	// Seq numbers the requests that arrived during the current step.
 	Seq uint64 `json:"seq"`
+	// Failed is the lowest step whose requests failed during the current recovery, or -1.
+	Failed int `json:"failed"`
+	// Resume is the step the next recovery starts from.
+	Resume int `json:"resume"`
 }
 
 // notRecovering is the step of a request let through outside recovery.
@@ -98,6 +103,7 @@ func newRecovery(r *Recovery) *recovery {
 		thresholds:   thresholds,
 		stepDuration: stepDuration,
 		readyToTrip:  readyToTrip,
+		state:        RecoveryState{Failed: notRecovering},
 	}
 }
 
@@ -124,14 +130,17 @@ func scaleShare(share float64) uint64 {
 }
 
 // update moves to the next step once the current one has lasted StepDuration
-// and a request let through at it has succeeded. After the last step it ends recovery.
+// and a request let through at it has succeeded.
+// After the step at the full load it ends recovery and forgets the failed step.
 func (r *recovery) update(now time.Time) {
 	if !r.state.Active || !r.state.StepSucceeded || now.Sub(r.state.StepStart) < r.stepDuration {
 		return
 	}
 
-	if r.state.Step+1 >= len(r.shares) {
+	if r.state.Step >= len(r.shares) {
 		r.state.Active = false
+		r.state.Failed = notRecovering
+		r.state.Resume = 0
 		return
 	}
 	r.startStep(r.state.Step+1, now)
@@ -153,6 +162,9 @@ func (r *recovery) admit(now time.Time) (int, bool) {
 	}
 
 	step := r.state.Step
+	if step == len(r.shares) {
+		return step, true
+	}
 	position := r.state.Seq * goldenRatio64
 	r.state.Seq++
 	return step, position < r.thresholds[step]
@@ -165,12 +177,28 @@ func (r *recovery) onSuccess(step int) {
 	}
 }
 
+// onFailure records the step at which a request that failed was let through.
+// It reports whether the CircuitBreaker is recovering.
+func (r *recovery) onFailure(step int) bool {
+	if !r.state.Active {
+		return false
+	}
+	if step != notRecovering && (r.state.Failed == notRecovering || step < r.state.Failed) {
+		r.state.Failed = step
+	}
+	return true
+}
+
 func (r *recovery) onStateChange(to State, now time.Time) {
 	switch to {
 	case StateClosed:
 		r.state.Active = true
-		r.startStep(0, now)
+		r.state.Failed = notRecovering
+		r.startStep(min(r.state.Resume, len(r.shares)-1), now)
 	case StateOpen:
+		if r.state.Active && r.state.Failed != notRecovering {
+			r.state.Resume = max(r.state.Failed-1, 0)
+		}
 		r.state.Active = false
 	}
 }
