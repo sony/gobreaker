@@ -31,6 +31,9 @@ func Get(url string) ([]byte, error) {
 		}
 
 		defer resp.Body.Close()
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return nil, fmt.Errorf("server error: %s", resp.Status)
+		}
 		return io.ReadAll(resp.Body)
 	})
 	if err != nil {
